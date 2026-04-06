@@ -25,7 +25,15 @@ MindBridge is an intelligent, empathetic digital emotional support system design
 - A [Google Gemini API Key](https://aistudio.google.com/app/apikey)
 - An [ElevenLabs API Key](https://elevenlabs.io/)
 
-### 1. Backend Setup
+### ⚡ Quick Start (One-Liner)
+
+To install all dependencies and run both the backend and frontend simultaneously in a single terminal, just run this command from the root `mind` directory:
+
+```bash
+(cd backend && npm install) && (cd frontend && npm install) && npx concurrently "cd backend && node index.js" "cd frontend && npm run dev"
+```
+
+### 1. Manual Backend Setup
 
 Navigate to the `backend` directory and install the required dependencies:
 
@@ -98,41 +106,34 @@ sudo apt-get install -y nodejs
 sudo npm install -g pm2
 ```
 
-### 3. Setup the Backend
+### 3. Setup & Run Everything (One-Liner)
 
-Clone your code to the server, install dependencies, and setup your environments:
+Clone your code to the server and navigate into the project root:
 
 ```bash
 git clone https://github.com/your-username/mindbridge.git
-cd mindbridge/backend
-npm install
+cd mindbridge
 ```
 
-Create the `.env` file:
+Create the `.env` file in the backend to store your keys:
 
 ```bash
-nano .env
+nano backend/.env
 # Paste your keys: PORT=5000, GEMINI_API_KEY=..., ELEVENLABS_API_KEY=...
 ```
 
-Start the API in the background:
+**Run this single command** to install all dependencies, build the React frontend, and keep both the API and UI running continuously using PM2:
 
 ```bash
-pm2 start index.js --name "mindbridge-api"
-```
-
-### 4. Build and Serve the Frontend
-
-```bash
-cd ../frontend
-npm install
-npm run build
-```
-
-Use PM2 to serve the built static files:
-
-```bash
-pm2 serve dist 5173 --name "mindbridge-ui" --spa
+(cd backend && npm install && pm2 start index.js --name "mindbridge-api") && (cd ../frontend && npm install && npm run build && pm2 serve dist 5173 --name "mindbridge-ui" --spa) && pm2 save
 ```
 
 Your system is now live! Simply visit `http://YOUR_DROPLET_IP:5173` in your browser.
+
+### 4. 🔄 Quick Update Command (For Future Changes)
+
+When you make changes locally and push to GitHub, SSH into your server and run this **single command** to pull the latest code, install any new packages, rebuild the frontend, and restart the live servers seamlessly:
+
+```bash
+git pull && (cd backend && npm install && pm2 restart mindbridge-api) && (cd ../frontend && npm install && npm run build && pm2 restart mindbridge-ui)
+```
