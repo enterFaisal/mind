@@ -75,3 +75,64 @@ _(The UI will now be available on http://localhost:5173)_
 3. Use the navigation bar to try the **Text Chat** (`/text`).
 4. Open the **Doctor Dashboard** (`/dashboard`) in a separate browser tab.
    - **Pro-tip:** Try typing _"My stomach is really hurting right now"_ in the Text Chat. Then quickly check the Dashboard—you will see Gemini correctly identifying the intention, remaining empathetic to the patient, and triggering a high-priority red **Escalation Needed** alert for the medical staff!
+
+## ☁️ Deployment (DigitalOcean Droplet)
+
+To deploy MindBridge online for production or hackathon judging, the easiest method is using a **DigitalOcean Ubuntu Droplet**.
+
+**Important Note Before Deploying:**
+Update the hardcoded `http://localhost:5000` URLs in your frontend files (`src/pages/VoiceChat.jsx`, `TextChat.jsx`, and `Dashboard.jsx`) to point to your new Droplet's Public IP address (e.g., `http://YOUR_DROPLET_IP:5000`).
+
+### 1. Provision & Access
+
+1. Create a new Ubuntu Droplet (22.04 or 24.04) on DigitalOcean.
+2. SSH into your droplet: `ssh root@YOUR_DROPLET_IP`
+
+### 2. Install Node.js & PM2
+
+Install Node.js and PM2 (a process manager to keep your app running forever):
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+sudo npm install -g pm2
+```
+
+### 3. Setup the Backend
+
+Clone your code to the server, install dependencies, and setup your environments:
+
+```bash
+git clone https://github.com/your-username/mindbridge.git
+cd mindbridge/backend
+npm install
+```
+
+Create the `.env` file:
+
+```bash
+nano .env
+# Paste your keys: PORT=5000, GEMINI_API_KEY=..., ELEVENLABS_API_KEY=...
+```
+
+Start the API in the background:
+
+```bash
+pm2 start index.js --name "mindbridge-api"
+```
+
+### 4. Build and Serve the Frontend
+
+```bash
+cd ../frontend
+npm install
+npm run build
+```
+
+Use PM2 to serve the built static files:
+
+```bash
+pm2 serve dist 5173 --name "mindbridge-ui" --spa
+```
+
+Your system is now live! Simply visit `http://YOUR_DROPLET_IP:5173` in your browser.
