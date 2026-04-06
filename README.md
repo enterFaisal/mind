@@ -89,7 +89,7 @@ _(The UI will now be available on http://localhost:5173)_
 To deploy MindBridge online for production or hackathon judging, the easiest method is using a **DigitalOcean Ubuntu Droplet**.
 
 **Important Note Before Deploying:**
-Update the hardcoded `http://localhost:5000` URLs in your frontend files (`src/pages/VoiceChat.jsx`, `TextChat.jsx`, and `Dashboard.jsx`) to point to your new Droplet's Public IP address (e.g., `http://YOUR_DROPLET_IP:5000`).
+The frontend has been updated to automatically detect the IP address of the server it is running on! You no longer need to hardcode `http://localhost:5000` URLs. When you visit your droplets public IP, the React app will automatically route its API calls to `http://YOUR_DROPLET_IP:5000`.
 
 ### 1. Provision & Access
 

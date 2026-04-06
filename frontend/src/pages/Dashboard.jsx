@@ -8,7 +8,8 @@ export default function Dashboard() {
 
   const fetchLogs = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/api/logs');
+      const API_BASE_URL = `http://${window.location.hostname}:5000`;
+      const response = await axios.get(`${API_BASE_URL}/api/logs`);
       // Sort backwards by timestamp so newest is top
       const sorted = response.data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       setLogs(sorted);

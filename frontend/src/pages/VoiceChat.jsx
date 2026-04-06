@@ -61,7 +61,8 @@ export default function VoiceChat() {
 
     try {
       // Send to backend
-      const response = await axios.post('http://localhost:5000/api/voice', formData, {
+      const API_BASE_URL = `http://${window.location.hostname}:5000`;
+      const response = await axios.post(`${API_BASE_URL}/api/voice`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       
