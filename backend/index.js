@@ -116,9 +116,14 @@ AI:
  * Call Gemini Flash with enforced JSON output and conversation history
  * @param {string} userInput
  * @param {string} sessionId
+ * @param {string} interfaceType - "text" or "voice" to determine which models to use
  * @returns {Promise<Object>} The parsed JSON
  */
-async function getMindBridgeResponse(userInput, sessionId) {
+async function getMindBridgeResponse(
+  userInput,
+  sessionId,
+  interfaceType = "text",
+) {
   try {
     // Build conversation history from interaction logs (last 10 turns for context)
     const recentLogs = interactionLogs
@@ -147,20 +152,85 @@ async function getMindBridgeResponse(userInput, sessionId) {
     // Add current input
     contents.push({ role: "user", parts: [{ text: userInput }] });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: contents,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-      },
-    });
+    const apiConfig = {
+      systemInstruction: SYSTEM_PROMPT,
+      responseMimeType: "application/json",
+    };
+
+    const mainModel =
+      interfaceType === "voice"
+        ? process.env.VOICE_MODEL_MAIN || "gemini-2.5-flash-lite"
+        : process.env.TEXT_MODEL_MAIN || "gemini-2.5-flash";
+
+    const backupModel =
+      interfaceType === "voice"
+        ? process.env.VOICE_MODEL_BACKUP || "gemini-2.5-flash-lite"
+        : process.env.TEXT_MODEL_BACKUP || "gemini-2.5-flash-lite";
+
+    let response;
+    try {
+      // 1. Attempt using primary model
+      response = await ai.models.generateContent({
+        model: mainModel,
+        contents: contents,
+        config: apiConfig,
+      });
+    } catch (primaryError) {
+      if (mainModel === backupModel && interfaceType === "voice") {
+        throw primaryError; // If voice is failing on its only model, just throw
+      }
+      if (mainModel === backupModel) {
+        console.warn(
+          `\n[⚠️ FALLBACK ALERT] ${mainModel} failed, but no alternate backup model is configured.`,
+        );
+        throw primaryError;
+      }
+
+      console.warn(
+        `\n[⚠️ FALLBACK ALERT] ${mainModel} failed due to:`,
+        primaryError.message,
+      );
+      console.warn(`Switching to fallback model (${backupModel})...\n`);
+
+      // 2. Attempt using fallback model
+      try {
+        response = await ai.models.generateContent({
+          model: backupModel,
+          contents: contents,
+          config: apiConfig,
+        });
+      } catch (secondaryError) {
+        console.warn(
+          `\n[⚠️ SECONDARY FALLBACK ALERT] ${backupModel} also failed due to:`,
+          secondaryError.message,
+        );
+        console.warn(
+          `Switching to ultimate fallback model (gemini-2.5-flash-lite)...\n`,
+        );
+
+        // 3. Attempt using ultimate fallback model (lightweight, highly available)
+        response = await ai.models.generateContent({
+          model: "gemini-2.5-flash-lite",
+          contents: contents,
+          config: apiConfig,
+        });
+      }
+    }
 
     const resultText = response.text;
     const parsedData = JSON.parse(resultText);
     return parsedData;
   } catch (error) {
-    console.error("Gemini API Error:", error);
+    console.error("\n================ GEMINI API ERROR ================");
+    console.error("Time:", new Date().toISOString());
+    console.error("UserInput:", userInput);
+    console.error("Error Message:", error.message);
+    console.error("Error Stack:", error.stack);
+    console.error(
+      "Full Error Details:",
+      JSON.stringify(error, Object.getOwnPropertyNames(error), 2),
+    );
+    console.error("==================================================\n");
     return {
       patient_sentiment: "Unknown",
       escalation_alert: false,
@@ -174,25 +244,36 @@ async function getMindBridgeResponse(userInput, sessionId) {
  * Text Interface Endpoint
  */
 app.post("/api/chat", async (req, res) => {
-  const { text, sessionId } = req.body;
-  if (!text) return res.status(400).json({ error: "Text is required" });
-  if (!sessionId)
-    return res.status(400).json({ error: "Session ID is required" });
+  try {
+    const { text, sessionId } = req.body;
+    if (!text) return res.status(400).json({ error: "Text is required" });
+    if (!sessionId)
+      return res.status(400).json({ error: "Session ID is required" });
 
-  const aiResponse = await getMindBridgeResponse(text, sessionId);
+    const aiResponse = await getMindBridgeResponse(text, sessionId, "text");
 
-  const logEntry = {
-    id: Date.now().toString(),
-    sessionId,
-    timestamp: new Date(),
-    type: "text",
-    userText: text,
-    ...aiResponse,
-  };
+    const logEntry = {
+      id: Date.now().toString(),
+      sessionId,
+      timestamp: new Date(),
+      type: "text",
+      userText: text,
+      ...aiResponse,
+    };
 
-  interactionLogs.push(logEntry);
+    interactionLogs.push(logEntry);
 
-  res.json(logEntry);
+    res.json(logEntry);
+  } catch (err) {
+    console.error("\n================ /API/CHAT ROUTE ERROR ================");
+    console.error("Time:", new Date().toISOString());
+    console.error("Error Message:", err.message);
+    console.error("Error Stack:", err.stack);
+    console.error(
+      "=========================================================\n",
+    );
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 });
 
 /**
@@ -210,7 +291,7 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     const audioBlob = new Blob([audioData], { type: "audio/mp3" }); // assume mp3/m4a/webm depending on recorder
     const sttFormData = new FormData();
     sttFormData.append("file", audioBlob, "audio.webm");
-    sttFormData.append("model_id", "eleven_multilingual_v2"); // Optional for STT
+    sttFormData.append("model_id", "scribe_v2_realtime"); // Updated STT model ID to Scribe v2
 
     let userText = "";
     try {
@@ -225,16 +306,27 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       );
       userText = sttResponse.data.text || "Hello?";
     } catch (sttErr) {
-      console.error("STT Error:", sttErr?.response?.data || sttErr.message);
+      console.error("\n================ ELEVENLABS STT ERROR ================");
+      console.error("Time:", new Date().toISOString());
+      console.error("STT Error Message:", sttErr.message);
+      console.error(
+        "STT Error Response:",
+        JSON.stringify(sttErr?.response?.data, null, 2),
+      );
+      console.error("======================================================\n");
       userText = "I couldn't hear you clearly, can you try again?";
     }
 
     // Clear uploaded file after reading
     fs.unlinkSync(req.file.path);
 
-    // 2. Get AI Response
+    // 2. Get AI Response (Set interfaceType = "voice" to map to correct ENV models)
     const sessionId = req.body.sessionId || "anonymous_session";
-    const aiResponse = await getMindBridgeResponse(userText, sessionId);
+    const aiResponse = await getMindBridgeResponse(
+      userText,
+      sessionId,
+      "voice",
+    );
 
     const logEntry = {
       id: Date.now().toString(),
@@ -251,15 +343,17 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     // If we want to hide API keys, we MUST hit TTS here and either stream it or return it.
     // Let's get the TTS audio as a base64 string or an arrayBuffer and send it to the client.
 
-    const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "EXAVITQu4vr4xnSDxMaL"; // default voice
+    // Using a default Voice ID that is guaranteed to be available on free tiers (Rachel)
+    const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
     const ttsResponse = await axios.post(
       `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
       {
         text: aiResponse.companion_reply,
-        model_id: "eleven_monolingual_v1",
+        model_id: "eleven_turbo_v2_5", // Use turbo v2.5 for low latency
         voice_settings: {
-          stability: 0.5,
+          stability: 0.8,
           similarity_boost: 0.75,
+          speed: 1.09,
         },
       },
       {
@@ -281,10 +375,15 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       audioBase64: `data:audio/mp3;base64,${audioBase64}`,
     });
   } catch (err) {
+    console.error("\n================ /API/VOICE ROUTE ERROR ===============");
+    console.error("Time:", new Date().toISOString());
+    console.error("Error Message:", err.message);
+    console.error("Error Stack:", err.stack);
     console.error(
-      "Voice processing error:",
-      err?.response?.data || err.message,
+      "Error Response Data:",
+      JSON.stringify(err?.response?.data, null, 2),
     );
+    console.error("=======================================================\n");
     res.status(500).json({ error: "Internal Server Error" });
   }
 });

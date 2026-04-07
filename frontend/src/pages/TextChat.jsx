@@ -27,17 +27,30 @@ export default function TextChat() {
     setInput('');
 
     try {
+      console.log(`[TextChat] Sending message to backend: "${userMsg.content}"`);
       const API_BASE_URL = `http://${window.location.hostname}:5000`;
       const response = await axios.post(`${API_BASE_URL}/api/chat`, { 
         text: userMsg.content,
         sessionId
       });
+      console.log("[TextChat] Received successful response from backend:", response.data);
       setMessages(prev => [
         ...prev, 
         { role: 'assistant', content: response.data.companion_reply }
       ]);
     } catch (error) {
-      console.error("Chat error:", error);
+      console.error("\n================ TEXT CHAT REQUEST ERROR ================");
+      console.error("Time:", new Date().toISOString());
+      console.error("Message Sent:", userMsg.content);
+      console.error("Error Message:", error.message);
+      if (error.response) {
+        console.error("Response Status:", error.response.status);
+        console.error("Response Data:", JSON.stringify(error.response.data, null, 2));
+      } else if (error.request) {
+        console.error("No response received. Request was:", error.request);
+      }
+      console.error("=========================================================\n");
+      
       setMessages(prev => [
         ...prev, 
         { role: 'assistant', content: "I'm having a bit of trouble responding right now. Please try again." }

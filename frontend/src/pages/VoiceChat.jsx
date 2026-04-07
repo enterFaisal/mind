@@ -62,10 +62,22 @@ export default function VoiceChat() {
     try {
       // Send to backend
       const API_BASE_URL = `http://${window.location.hostname}:5000`;
+      console.log(`[VoiceChat] Sending audio blob to backend. Size: ${audioBlob.size} bytes`);
+      
       const response = await axios.post(`${API_BASE_URL}/api/voice`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       
+      console.log("[VoiceChat] Received successful response from backend:", {
+        id: response.data.id,
+        userText: response.data.userText,
+        companion_reply: response.data.companion_reply,
+        patient_sentiment: response.data.patient_sentiment,
+        crisis_risk_level: response.data.crisis_risk_level,
+        escalation_alert: response.data.escalation_alert,
+        hasAudio: !!response.data.audioBase64
+      });
+
       const { userText, companion_reply, audioBase64 } = response.data;
       
       setTranscript(userText);
@@ -73,12 +85,25 @@ export default function VoiceChat() {
 
       // Play the returning audio
       if (audioBase64) {
+        console.log("[VoiceChat] Playing TTS audio response base64...");
         const audio = new Audio(audioBase64);
-        audio.play();
+        audio.play().catch(e => console.error("[VoiceChat] Audio playback failed:", e));
+      } else {
+        console.warn("[VoiceChat] Warning: No audioBase64 returned from backend API");
       }
 
     } catch (error) {
-      console.error("Error processing voice:", error);
+      console.error("\n================ VOICE CHAT REQUEST ERROR ===============");
+      console.error("Time:", new Date().toISOString());
+      console.error("Error Message:", error.message);
+      if (error.response) {
+        console.error("Response Status:", error.response.status);
+        console.error("Response Data:", JSON.stringify(error.response.data, null, 2));
+      } else if (error.request) {
+        console.error("No response received. Request was:", error.request);
+      }
+      console.error("=========================================================\n");
+      
       setReply("I'm sorry, I encountered an error. Could you try again?");
     } finally {
       setIsProcessing(false);
