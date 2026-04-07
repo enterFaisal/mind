@@ -65,32 +65,26 @@ export default function VoiceChat() {
       console.log(`[VoiceChat] Sending audio blob to backend. Size: ${audioBlob.size} bytes`);
       
       const response = await axios.post(`${API_BASE_URL}/api/voice`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        responseType: 'blob' // We now expect audio/mpeg back directly!
       });
       
-      console.log("[VoiceChat] Received successful response from backend:", {
-        id: response.data.id,
-        userText: response.data.userText,
-        companion_reply: response.data.companion_reply,
-        patient_sentiment: response.data.patient_sentiment,
-        crisis_risk_level: response.data.crisis_risk_level,
-        escalation_alert: response.data.escalation_alert,
-        hasAudio: !!response.data.audioBase64
-      });
-
-      const { userText, companion_reply, audioBase64 } = response.data;
+      // The log entry info is now stored in custom Headers since the response body is pure audio stream
+      const encodedLog = response.headers['x-log-entry'];
+      if (!encodedLog) throw new Error("Missing X-Log-Entry header containing AI analysis payload.");
       
-      setTranscript(userText);
-      setReply(companion_reply);
+      const logEntry = JSON.parse(decodeURIComponent(encodedLog));
+      
+      console.log("[VoiceChat] Received successful response from backend:", logEntry);
+      
+      setTranscript(logEntry.userText);
+      setReply(logEntry.companion_reply);
 
-      // Play the returning audio
-      if (audioBase64) {
-        console.log("[VoiceChat] Playing TTS audio response base64...");
-        const audio = new Audio(audioBase64);
-        audio.play().catch(e => console.error("[VoiceChat] Audio playback failed:", e));
-      } else {
-        console.warn("[VoiceChat] Warning: No audioBase64 returned from backend API");
-      }
+      // Play the returning audio by turning the returned blob into a local ObjectURL
+      const audioUrl = URL.createObjectURL(response.data);
+      console.log("[VoiceChat] Playing TTS streaming audio buffer...");
+      const audio = new Audio(audioUrl);
+      audio.play().catch(e => console.error("[VoiceChat] Audio playback failed:", e));
 
     } catch (error) {
       console.error("\n================ VOICE CHAT REQUEST ERROR ===============");

@@ -22,8 +22,17 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const upload = multer({ dest: "uploads/" });
 
 // In-Memory Storage for prototype data
-// Shape: { id: string, sessionId: string, timestamp: Date, type: 'text' | 'voice', userText: string, companionReply: string, sentiment: string, escalationAlert: boolean, clinicalSummary: string }
 const interactionLogs = [];
+const sseClients = new Set(); // For real-time Server-Sent Events
+
+// Helper to add log and instantly broadcast to all connected dashboards
+function broadcastLog(logEntry) {
+  interactionLogs.push(logEntry);
+  const payload = JSON.stringify(logEntry);
+  for (const client of sseClients) {
+    client.write(`data: ${payload}\n\n`);
+  }
+}
 
 const SYSTEM_PROMPT = `
 
@@ -125,10 +134,10 @@ async function getMindBridgeResponse(
   interfaceType = "text",
 ) {
   try {
-    // Build conversation history from interaction logs (last 10 turns for context)
+    // Build conversation history from interaction logs (last 4 turns for context - optimized for latency)
     const recentLogs = interactionLogs
       .filter((log) => log.sessionId === sessionId)
-      .slice(-10);
+      .slice(-4);
     const contents = [];
 
     for (const log of recentLogs) {
@@ -261,7 +270,7 @@ app.post("/api/chat", async (req, res) => {
       ...aiResponse,
     };
 
-    interactionLogs.push(logEntry);
+    broadcastLog(logEntry);
 
     res.json(logEntry);
   } catch (err) {
@@ -291,7 +300,7 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     const audioBlob = new Blob([audioData], { type: "audio/mp3" }); // assume mp3/m4a/webm depending on recorder
     const sttFormData = new FormData();
     sttFormData.append("file", audioBlob, "audio.webm");
-    sttFormData.append("model_id", "scribe_v2_realtime"); // Updated STT model ID to Scribe v2
+    sttFormData.append("model_id", "scribe_v2"); // Updated STT model ID to Scribe v2
 
     let userText = "";
     try {
@@ -336,17 +345,12 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       userText: userText,
       ...aiResponse,
     };
-    interactionLogs.push(logEntry);
+    broadcastLog(logEntry); // Instantly push AI interpretation to Dashboard before finishing slow TTS
 
-    // 3. Return the JSON payload
-    // Note: The frontend will do a separate TTS call or we can hit TTS here.
-    // If we want to hide API keys, we MUST hit TTS here and either stream it or return it.
-    // Let's get the TTS audio as a base64 string or an arrayBuffer and send it to the client.
-
-    // Using a default Voice ID that is guaranteed to be available on free tiers (Rachel)
+    // 3. Stream TTS audio directly to the frontend for instant playback
     const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
     const ttsResponse = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?optimize_streaming_latency=3`,
       {
         text: aiResponse.companion_reply,
         model_id: "eleven_turbo_v2_5", // Use turbo v2.5 for low latency
@@ -361,19 +365,16 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
           "xi-api-key": process.env.ELEVENLABS_API_KEY,
           "Content-Type": "application/json",
         },
-        responseType: "arraybuffer",
+        responseType: "stream", // Retrieve binary audio chunk by chunk
       },
     );
 
-    const audioBase64 = Buffer.from(ttsResponse.data, "binary").toString(
-      "base64",
-    );
+    // Provide the JSON data in response headers so the frontend still gets the text/analytics
+    res.setHeader("X-Log-Entry", encodeURIComponent(JSON.stringify(logEntry)));
+    res.setHeader("Content-Type", "audio/mpeg");
 
-    // Send the combined response
-    res.json({
-      ...logEntry,
-      audioBase64: `data:audio/mp3;base64,${audioBase64}`,
-    });
+    // Pipe the audio directly to the user
+    ttsResponse.data.pipe(res);
   } catch (err) {
     console.error("\n================ /API/VOICE ROUTE ERROR ===============");
     console.error("Time:", new Date().toISOString());
@@ -389,10 +390,26 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
 });
 
 /**
- * Dashboard Log Endpoint
+ * Dashboard Log Endpoints
  */
 app.get("/api/logs", (req, res) => {
   res.json(interactionLogs);
+});
+
+// SSE endpoint for zero-latency dashboard updates
+app.get("/api/logs/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  // Send an initial heartbeat
+  res.write(": heartbeat\n\n");
+
+  sseClients.add(res);
+
+  req.on("close", () => {
+    sseClients.delete(res);
+  });
 });
 
 app.listen(port, () => {

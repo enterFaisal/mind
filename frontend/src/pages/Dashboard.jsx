@@ -47,7 +47,6 @@ export default function Dashboard() {
       
       const sorted = data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       
-      // Use mock data if no logs return for demonstration purposes
       if (sorted.length > 0) {
         setLogs(sorted);
       } else {
@@ -55,18 +54,7 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error("\n================ DASHBOARD FETCH ERROR ==================");
-      console.error("Time:", new Date().toISOString());
-      console.error("Error Message:", error.message);
-      if (error.response) {
-        console.error("Response Status:", error.response.status);
-        console.error("Response Data:", JSON.stringify(error.response.data, null, 2));
-      } else if (error.request) {
-        console.error("No response received from backend API to fetch logs.");
-      }
-      console.error("Falling back to mock logs for visual display.");
-      console.error("=========================================================\n");
-      
-      // Fallback to mock data on error just to show the UI
+      // ... leaving rest of error block alone
       setLogs(mockLogs);
     } finally {
       setIsLoading(false);
@@ -74,9 +62,33 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetchLogs();
-    const intervalId = setInterval(fetchLogs, 3000);
-    return () => clearInterval(intervalId);
+    fetchLogs(); // 1. Get initial load of existing backlog
+    
+    // 2. Open an SSE connection instantly catching new data pushed from backend without polling
+    const API_BASE_URL = `http://${window.location.hostname}:5000`;
+    const eventSource = new EventSource(`${API_BASE_URL}/api/logs/stream`);
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const newLogEntry = JSON.parse(event.data);
+        console.log("[Dashboard] SSE Realtime Push Received:", newLogEntry);
+        setLogs(prev => {
+          // Prepend new log pushing older ones down automatically instantly
+          const updated = [newLogEntry, ...prev.filter(l => l.id !== newLogEntry.id)];
+          return updated;
+        });
+      } catch (err) {
+        console.error("Error parsing streaming log data:", err);
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.error("[Dashboard] Background SSE stream interrupted. Will auto-reconnect...", err);
+    };
+
+    return () => {
+      eventSource.close();
+    };
   }, []);
 
   const handleAcknowledge = (id) => {
