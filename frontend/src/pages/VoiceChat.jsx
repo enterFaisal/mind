@@ -1,5 +1,4 @@
 import { useState, useRef, useMemo } from 'react';
-import axios from 'axios';
 import { Mic, Square, Loader2 } from 'lucide-react';
 
 export default function VoiceChat() {
@@ -8,8 +7,11 @@ export default function VoiceChat() {
   const [transcript, setTranscript] = useState('');
   const [reply, setReply] = useState('');
   
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  const wsRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const playbackChunksRef = useRef([]);
 
   const sessionId = useMemo(() => {
     let id = localStorage.getItem('mindbridge_session_id');
@@ -22,21 +24,83 @@ export default function VoiceChat() {
 
   const startRecording = async () => {
     try {
+      setTranscript('');
+      setReply('');
+      playbackChunksRef.current = [];
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      mediaStreamRef.current = stream;
+
+      const API_HOST = window.location.hostname;
+      wsRef.current = new WebSocket(`ws://${API_HOST}:5000/api/voice/stream`);
+
+      wsRef.current.onopen = () => {
+        wsRef.current.send(JSON.stringify({ type: 'start', sessionId }));
+        setIsRecording(true);
+        setIsProcessing(false);
+      };
+
+      wsRef.current.binaryType = 'arraybuffer';
+      wsRef.current.onmessage = async (event) => {
+        // If it's a Buffer/Blob (Binary Audio from TTS)
+        if (event.data instanceof ArrayBuffer) {
+          playbackChunksRef.current.push(event.data);
+          return;
+        }
+
+        try {
+          // It is JSON text
+          const msg = JSON.parse(event.data);
+          console.log("[WS] Received message:", msg);
+          
+          if (msg.type === 'stt_progress') {
+             setTranscript(msg.transcript);
+          } else if (msg.type === 'ai_response') {
+             if (msg.data && msg.data.companion_reply) {
+               setReply(msg.data.companion_reply);
+             }
+          } else if (msg.type === 'tts_done') {
+             setIsProcessing(false);
+             console.log("[WS] TTS Done. Playing chunks:", playbackChunksRef.current.length);
+             // Play the accumulated TTS binary chunks!
+             const finalAudioBlob = new Blob(playbackChunksRef.current, { type: 'audio/mpeg' });
+             const audioUrl = URL.createObjectURL(finalAudioBlob);
+             const audio = new Audio(audioUrl);
+             audio.play().catch(e => console.error("[Audio] Playback error:", e));
+          } else if (msg.type === 'error') {
+             setReply("Something went wrong with the voice engine.");
+             setIsProcessing(false);
+          }
+        } catch (err) {
+          console.error("[WS] Error parsing message:", err, event.data);
         }
       };
 
-      mediaRecorderRef.current.onstop = handleAudioStop;
+      wsRef.current.onerror = (err) => {
+        console.error("WebSocket connection error:", err);
+      };
+
+      // Realtime Audio Extraction to Raw PCM 16kHz for ElevenLabs standard STT WSS compatibility
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
       
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-      setTranscript('');
-      setReply('');
+      processorRef.current.onaudioprocess = (e) => {
+        if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+
+        const inputData = e.inputBuffer.getChannelData(0);
+        const pcm16 = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          let s = Math.max(-1, Math.min(1, inputData[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        
+        wsRef.current.send(pcm16.buffer); // Fire instantly over websocket
+      };
+
+      source.connect(processorRef.current);
+      processorRef.current.connect(audioContextRef.current.destination);
+
     } catch (err) {
       console.error("Microphone access denied:", err);
       alert("Please allow microphone access to talk to MindBridge.");
@@ -44,63 +108,24 @@ export default function VoiceChat() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  };
-
-  const handleAudioStop = async () => {
+    setIsRecording(false);
     setIsProcessing(true);
-    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-    audioChunksRef.current = []; // Reset chunks
 
-    const formData = new FormData();
-    formData.append('audio', audioBlob, 'patient-voice.webm');
-    formData.append('sessionId', sessionId);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'stop' }));
+    }
 
-    try {
-      // Send to backend
-      const API_BASE_URL = `http://${window.location.hostname}:5000`;
-      console.log(`[VoiceChat] Sending audio blob to backend. Size: ${audioBlob.size} bytes`);
-      
-      const response = await axios.post(`${API_BASE_URL}/api/voice`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        responseType: 'blob' // We now expect audio/mpeg back directly!
-      });
-      
-      // The log entry info is now stored in custom Headers since the response body is pure audio stream
-      const encodedLog = response.headers['x-log-entry'];
-      if (!encodedLog) throw new Error("Missing X-Log-Entry header containing AI analysis payload.");
-      
-      const logEntry = JSON.parse(decodeURIComponent(encodedLog));
-      
-      console.log("[VoiceChat] Received successful response from backend:", logEntry);
-      
-      setTranscript(logEntry.userText);
-      setReply(logEntry.companion_reply);
-
-      // Play the returning audio by turning the returned blob into a local ObjectURL
-      const audioUrl = URL.createObjectURL(response.data);
-      console.log("[VoiceChat] Playing TTS streaming audio buffer...");
-      const audio = new Audio(audioUrl);
-      audio.play().catch(e => console.error("[VoiceChat] Audio playback failed:", e));
-
-    } catch (error) {
-      console.error("\n================ VOICE CHAT REQUEST ERROR ===============");
-      console.error("Time:", new Date().toISOString());
-      console.error("Error Message:", error.message);
-      if (error.response) {
-        console.error("Response Status:", error.response.status);
-        console.error("Response Data:", JSON.stringify(error.response.data, null, 2));
-      } else if (error.request) {
-        console.error("No response received. Request was:", error.request);
-      }
-      console.error("=========================================================\n");
-      
-      setReply("I'm sorry, I encountered an error. Could you try again?");
-    } finally {
-      setIsProcessing(false);
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(t => t.stop());
+      mediaStreamRef.current = null;
     }
   };
 

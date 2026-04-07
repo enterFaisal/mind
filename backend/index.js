@@ -1,4 +1,6 @@
 const express = require("express");
+const http = require("http");
+const WebSocket = require("ws");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { GoogleGenAI } = require("@google/genai");
@@ -9,6 +11,10 @@ const fs = require("fs");
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+// Attach WebSocket Server onto the same port
+const wss = new WebSocket.Server({ server });
+
 const port = process.env.PORT || 5000;
 
 app.use(cors());
@@ -396,6 +402,170 @@ app.get("/api/logs", (req, res) => {
   res.json(interactionLogs);
 });
 
+/**
+ * WebSocket endpoint for Real-Time STT and TTS streaming.
+ * Implements full-duplex conversational voice bridging with ElevenLabs scribe_v2_realtime.
+ */
+wss.on("connection", (ws, req) => {
+  if (req.url !== "/api/voice/stream") {
+    return ws.close(); // Reject other paths
+  }
+
+  let elevenWs = null;
+  let currentSessionId = "anonymous_session";
+  let currentTranscript = "";
+
+  console.log("[WSS] Client connected for Real-Time WebSocket stream.");
+
+  ws.on("message", async (msg, isBinary) => {
+    try {
+      if (isBinary) {
+        // Binary audio passing directly to ElevenLabs
+        if (elevenWs && elevenWs.readyState === WebSocket.OPEN) {
+          const base64Audio = msg.toString("base64");
+          elevenWs.send(
+            JSON.stringify({
+              message_type: "input_audio_chunk",
+              audio_base_64: base64Audio,
+              commit: false,
+            }),
+          );
+        }
+        return;
+      }
+
+      // Not binary, so it must be a JSON control message from the client
+      const textMsg = msg.toString("utf8");
+      const data = JSON.parse(textMsg);
+
+      if (data.type === "start") {
+        currentSessionId = data.sessionId || Date.now().toString();
+        currentTranscript = "";
+
+        console.log("[WSS] Opening ElevenLabs scribe_v2_realtime connection.");
+        elevenWs = new WebSocket(
+          "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime",
+          { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY } },
+        );
+
+        elevenWs.on("open", () => {
+          console.log("[ElevenLabs] Real-Time STT Connection Authorized.");
+        });
+
+        elevenWs.on("message", (elevenMsg) => {
+          const sttData = JSON.parse(elevenMsg);
+          if (
+            sttData.message_type === "partial_transcript" ||
+            sttData.message_type === "committed_transcript"
+          ) {
+            if (sttData.text) {
+              currentTranscript = sttData.text;
+              // Instantly stream transcribed words to UI
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(
+                  JSON.stringify({
+                    type: "stt_progress",
+                    transcript: sttData.text,
+                  }),
+                );
+              }
+            }
+          } else if (
+            sttData.message_type === "error" ||
+            sttData.message_type === "scribe_error"
+          ) {
+            console.error("[ElevenLabs WSS Error]", sttData);
+          }
+        });
+
+        elevenWs.on("close", () => console.log("[ElevenLabs] STT WS Closed"));
+        elevenWs.on("error", (err) =>
+          console.error("[ElevenLabs] STT WS Error:", err),
+        );
+      } else if (data.type === "stop") {
+        console.log("[WSS] Client finished talking. Resolving LLM and TTS...");
+        if (elevenWs && elevenWs.readyState === WebSocket.OPEN) {
+          // Close upstream cleanly
+          elevenWs.send(
+            JSON.stringify({
+              message_type: "input_audio_chunk",
+              commit: true,
+              audio_base_64: "",
+            }),
+          );
+          elevenWs.close();
+        }
+
+        if (!currentTranscript) currentTranscript = "Hello?";
+
+        // Call our Gemini fallback models
+        const aiResponse = await getMindBridgeResponse(
+          currentTranscript,
+          currentSessionId,
+          "voice",
+        );
+
+        const logEntry = {
+          id: Date.now().toString(),
+          sessionId: currentSessionId,
+          timestamp: new Date(),
+          type: "voice",
+          userText: currentTranscript,
+          ...aiResponse,
+        };
+        broadcastLog(logEntry); // Trigger dashboard SSE
+
+        // Send UI update
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ai_response", data: logEntry }));
+        }
+
+        // Trigger ElevenLabs low-latency TTS pipeline
+        console.log("[WSS] Calling ElevenLabs Turbo v2.5 for TTS response...");
+        const VOICE_ID =
+          process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+        const ttsResponse = await axios.post(
+          `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?optimize_streaming_latency=3`,
+          {
+            text: aiResponse.companion_reply,
+            model_id: "eleven_turbo_v2_5",
+            voice_settings: {
+              stability: 0.8,
+              similarity_boost: 0.75,
+              speed: 1.09,
+            },
+          },
+          {
+            headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY },
+            responseType: "stream",
+          },
+        );
+
+        // Pipe binary chunks back over the WebSocket to exactly match frontend playback
+        ttsResponse.data.on("data", (chunk) => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
+        });
+
+        ttsResponse.data.on("end", () => {
+          if (ws.readyState === WebSocket.OPEN)
+            ws.send(JSON.stringify({ type: "tts_done" }));
+          console.log("[WSS] Finished sending TTS MP3 chunks via WebSocket.");
+        });
+      }
+    } catch (err) {
+      console.error("[WSS/AI Processing Error]", err);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "error", message: "Failed pipeline." }));
+      }
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("[WSS] Client Disconnected. Cleaning down nodes.");
+    if (elevenWs && elevenWs.readyState === WebSocket.OPEN) elevenWs.close();
+  });
+});
+
 // SSE endpoint for zero-latency dashboard updates
 app.get("/api/logs/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -412,6 +582,6 @@ app.get("/api/logs/stream", (req, res) => {
   });
 });
 
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
 });
