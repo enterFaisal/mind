@@ -362,21 +362,17 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     broadcastLog(logEntry); // Instantly push AI interpretation to Dashboard before finishing slow TTS
 
     // 3. Stream TTS audio directly to the frontend for instant playback
-    const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+    const HAMSA_VOICE_ID =
+      process.env.HAMSA_VOICE_ID || "84c234d1-962d-4008-99f4-0d1b28b7e2c4";
     const ttsResponse = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?optimize_streaming_latency=3`,
+      `https://api.tryhamsa.com/v1/jobs/text-to-speech`,
       {
         text: aiResponse.companion_reply,
-        model_id: "eleven_turbo_v2_5", // Use turbo v2.5 for low latency
-        voice_settings: {
-          stability: 0.8,
-          similarity_boost: 0.75,
-          speed: 1.05,
-        },
+        voice_id: HAMSA_VOICE_ID,
       },
       {
         headers: {
-          "xi-api-key": process.env.ELEVENLABS_API_KEY,
+          Authorization: `Bearer ${process.env.HAMSA_API_KEY}`,
           "Content-Type": "application/json",
         },
         responseType: "stream", // Retrieve binary audio chunk by chunk
@@ -532,22 +528,21 @@ wss.on("connection", (ws, req) => {
           ws.send(JSON.stringify({ type: "ai_response", data: logEntry }));
         }
 
-        // Trigger ElevenLabs low-latency TTS pipeline
-        console.log("[WSS] Calling ElevenLabs Turbo v2.5 for TTS response...");
-        const VOICE_ID =
-          process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+        // Trigger Hamsa low-latency TTS pipeline
+        console.log("[WSS] Calling tryhamsa.com for TTS response...");
+        const HAMSA_VOICE_ID =
+          process.env.HAMSA_VOICE_ID || "84c234d1-962d-4008-99f4-0d1b28b7e2c4";
         const ttsResponse = await axios.post(
-          `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?optimize_streaming_latency=3`,
+          `https://api.tryhamsa.com/v1/jobs/text-to-speech`,
           {
             text: aiResponse.companion_reply,
-            model_id: "eleven_turbo_v2_5",
-            voice_settings: {
-              stability: 0.8,
-              similarity_boost: 0.75,
-            },
+            voice_id: HAMSA_VOICE_ID,
           },
           {
-            headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY },
+            headers: {
+              Authorization: `Bearer ${process.env.HAMSA_API_KEY}`,
+              "Content-Type": "application/json",
+            },
             responseType: "stream",
           },
         );
