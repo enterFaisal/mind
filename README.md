@@ -138,9 +138,59 @@ When you make changes locally and push to GitHub, SSH into your server and run t
 git pull && (cd backend && npm install && pm2 restart mindbridge-api) && (cd ../frontend && npm install && npm run build && pm2 restart mindbridge-ui)
 ```
 
-## 🚀 Deployment (Frontend via Vercel for SSL/Mic Access)
+## 🚀 Deployment (Frontend via Vercel & Backend SSL via nip.io)
 
-To easily get SSL (HTTPS) for the frontend so that browsers allow microphone access seamlessly, you can deploy the `frontend` folder to **Vercel**.
+When hosting the frontend on Vercel (HTTPS), browsers will block requests to your backend if it uses a standard `http://IP:5000` address due to "Mixed Content" security rules.
+
+To fix this, you must give your DigitalOcean Droplet backend a free SSL Certificate using `nip.io` (a free DNS resolver for IP addresses) and Nginx before deploying your Vercel frontend.
+
+### Part 1: Secure Your Backend (DigitalOcean)
+
+SSH into your DigitalOcean Droplet: `ssh root@YOUR_DROPLET_IP`
+
+1. **Install Nginx and Certbot:**
+
+```bash
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+```
+
+2. **Configure Nginx as a Reverse Proxy:**
+   Replace `167.172.182.170` with your actual droplet IP address in the command below:
+
+```bash
+sudo tee /etc/nginx/sites-available/mindbridge > /dev/null << 'EOF'
+server {
+    server_name 167.172.182.170.nip.io;
+    location / {
+        proxy_pass http://localhost:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+    }
+}
+EOF
+```
+
+3. **Enable the proxy and restart Nginx:**
+
+```bash
+sudo ln -s /etc/nginx/sites-available/mindbridge /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo systemctl restart nginx
+```
+
+4. **Generate Your Free SSL Certificate:**
+   Make sure you replace `YOUR_EMAIL` and `167.172.182.170`:
+
+```bash
+sudo certbot --nginx -d 167.172.182.170.nip.io --non-interactive --agree-tos -m faisal@uselines.com
+```
+
+Your API is now securely running at `https://YOUR_DROPLET_IP.nip.io`!
+
+### Part 2: Deploy Frontend to Vercel
 
 1. Create a GitHub repository and push your project.
 2. Go to [Vercel](https://vercel.com/) and click **Add New Project**.
@@ -149,7 +199,7 @@ To easily get SSL (HTTPS) for the frontend so that browsers allow microphone acc
 5. Set the **Root Directory** to `frontend`.
 6. Add an Environment Variable:
    - **Name**: `VITE_API_URL`
-   - **Value**: `http://YOUR_DROPLET_IP:5000` _(Replace with your actual backend IP or domain. If your backend has SSL, use `https://YOUR_DOMAIN`)_
+   - **Value**: `https://YOUR_DROPLET_IP.nip.io`
 7. Click **Deploy**.
 
-The frontend will automatically configure WebSockets (`ws://` or `wss://`) and HTTP routes based on `VITE_API_URL`. This gives you a secure `https://` URL for the UI while it talks to your backend securely over the network.
+The frontend will automatically configure WebSockets securely (`wss://`) and HTTP routes based on `VITE_API_URL`, successfully preventing Mixed Content errors!
