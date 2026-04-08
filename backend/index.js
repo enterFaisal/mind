@@ -368,23 +368,34 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       `https://api.tryhamsa.com/v1/jobs/text-to-speech`,
       {
         text: aiResponse.companion_reply,
-        voice_id: HAMSA_VOICE_ID,
+        voiceId: HAMSA_VOICE_ID,
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.HAMSA_API_KEY}`,
+          Authorization: `Token ${process.env.HAMSA_API_KEY}`,
           "Content-Type": "application/json",
         },
-        responseType: "stream", // Retrieve binary audio chunk by chunk
       },
     );
 
     // Provide the JSON data in response headers so the frontend still gets the text/analytics
     res.setHeader("X-Log-Entry", encodeURIComponent(JSON.stringify(logEntry)));
-    res.setHeader("Content-Type", "audio/mpeg");
 
-    // Pipe the audio directly to the user
-    ttsResponse.data.pipe(res);
+    if (
+      ttsResponse.data &&
+      ttsResponse.data.data &&
+      ttsResponse.data.data.mediaUrl
+    ) {
+      const audioUrl = ttsResponse.data.data.mediaUrl;
+      const audioStreamResponse = await axios.get(audioUrl, {
+        responseType: "stream",
+      });
+      res.setHeader("Content-Type", "audio/mpeg");
+      // Pipe the audio directly to the user
+      audioStreamResponse.data.pipe(res);
+    } else {
+      res.status(500).json({ error: "Failed to generate Hamsa TTS" });
+    }
   } catch (err) {
     console.error("\n================ /API/VOICE ROUTE ERROR ===============");
     console.error("Time:", new Date().toISOString());
@@ -536,27 +547,44 @@ wss.on("connection", (ws, req) => {
           `https://api.tryhamsa.com/v1/jobs/text-to-speech`,
           {
             text: aiResponse.companion_reply,
-            voice_id: HAMSA_VOICE_ID,
+            voiceId: HAMSA_VOICE_ID,
           },
           {
             headers: {
-              Authorization: `Bearer ${process.env.HAMSA_API_KEY}`,
+              Authorization: `Token ${process.env.HAMSA_API_KEY}`,
               "Content-Type": "application/json",
             },
-            responseType: "stream",
           },
         );
 
-        // Pipe binary chunks back over the WebSocket to exactly match frontend playback
-        ttsResponse.data.on("data", (chunk) => {
-          if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
-        });
+        // Hamsa returns a JSON with a URL to the media, not a direct binary stream
+        if (
+          ttsResponse.data &&
+          ttsResponse.data.data &&
+          ttsResponse.data.data.mediaUrl
+        ) {
+          const audioUrl = ttsResponse.data.data.mediaUrl;
+          console.log("[WSS] Hamsa TTS ready at URL:", audioUrl);
 
-        ttsResponse.data.on("end", () => {
-          if (ws.readyState === WebSocket.OPEN)
-            ws.send(JSON.stringify({ type: "tts_done" }));
-          console.log("[WSS] Finished sending TTS MP3 chunks via WebSocket.");
-        });
+          // Now fetch the actual audio stream from the returned URL
+          const audioStreamResponse = await axios.get(audioUrl, {
+            responseType: "stream",
+          });
+
+          audioStreamResponse.data.on("data", (chunk) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
+          });
+
+          audioStreamResponse.data.on("end", () => {
+            if (ws.readyState === WebSocket.OPEN)
+              ws.send(JSON.stringify({ type: "tts_done" }));
+            console.log(
+              "[WSS] Finished sending Hamsa TTS MP3 chunks via WebSocket.",
+            );
+          });
+        } else {
+          throw new Error("Invalid response from Hamsa TTS API");
+        }
       }
     } catch (err) {
       console.error("[WSS/AI Processing Error]", err.message);
