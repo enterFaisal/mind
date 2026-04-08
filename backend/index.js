@@ -363,6 +363,7 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
         voice_settings: {
           stability: 0.8,
           similarity_boost: 0.75,
+          speed: 1.05,
         },
       },
       {
@@ -496,6 +497,10 @@ wss.on("connection", (ws, req) => {
         }
 
         if (!currentTranscript) currentTranscript = "Hello?";
+
+        console.log(`\n================ STT RESULT ================`);
+        console.log(`[User Said]: "${currentTranscript}"`);
+        console.log(`============================================\n`);
 
         // Call our Gemini fallback models
         const aiResponse = await getMindBridgeResponse(
