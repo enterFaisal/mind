@@ -58,8 +58,10 @@ export default function VoiceChat() {
           console.log("[WS] Received message:", msg);
           
           if (msg.type === 'stt_progress') {
+             console.log(`[🎤 Live STT]: "${msg.transcript}"`);
              setTranscript(msg.transcript);
           } else if (msg.type === 'ai_response') {
+             console.log(`[🤖 Final STT Parsed]: "${msg.data.userText}"`);
              if (msg.data && msg.data.companion_reply) {
                setReply(msg.data.companion_reply);
              }
