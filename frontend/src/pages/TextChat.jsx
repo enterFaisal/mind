@@ -28,7 +28,7 @@ export default function TextChat() {
 
     try {
       console.log(`[TextChat] Sending message to backend: "${userMsg.content}"`);
-      const API_BASE_URL = `http://${window.location.hostname}:5000`;
+      const API_BASE_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000`;
       const response = await axios.post(`${API_BASE_URL}/api/chat`, { 
         text: userMsg.content,
         sessionId

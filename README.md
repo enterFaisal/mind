@@ -137,3 +137,19 @@ When you make changes locally and push to GitHub, SSH into your server and run t
 ```bash
 git pull && (cd backend && npm install && pm2 restart mindbridge-api) && (cd ../frontend && npm install && npm run build && pm2 restart mindbridge-ui)
 ```
+
+## 🚀 Deployment (Frontend via Vercel for SSL/Mic Access)
+
+To easily get SSL (HTTPS) for the frontend so that browsers allow microphone access seamlessly, you can deploy the `frontend` folder to **Vercel**.
+
+1. Create a GitHub repository and push your project.
+2. Go to [Vercel](https://vercel.com/) and click **Add New Project**.
+3. Import your GitHub repository.
+4. **Important**: In the Vercel project configuration, set the **Framework Preset** to `Vite`.
+5. Set the **Root Directory** to `frontend`.
+6. Add an Environment Variable:
+   - **Name**: `VITE_API_URL`
+   - **Value**: `http://YOUR_DROPLET_IP:5000` _(Replace with your actual backend IP or domain. If your backend has SSL, use `https://YOUR_DOMAIN`)_
+7. Click **Deploy**.
+
+The frontend will automatically configure WebSockets (`ws://` or `wss://`) and HTTP routes based on `VITE_API_URL`. This gives you a secure `https://` URL for the UI while it talks to your backend securely over the network.

@@ -41,7 +41,7 @@ export default function Dashboard() {
   const fetchLogs = async () => {
     try {
       // console.log("[Dashboard] Fetching live patient logs...");
-      const API_BASE_URL = `http://${window.location.hostname}:5000`;
+      const API_BASE_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000`;
       const response = await axios.get(`${API_BASE_URL}/api/logs`);
       const data = response.data;
       
@@ -65,7 +65,7 @@ export default function Dashboard() {
     fetchLogs(); // 1. Get initial load of existing backlog
     
     // 2. Open an SSE connection instantly catching new data pushed from backend without polling
-    const API_BASE_URL = `http://${window.location.hostname}:5000`;
+    const API_BASE_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000`;
     const eventSource = new EventSource(`${API_BASE_URL}/api/logs/stream`);
     
     eventSource.onmessage = (event) => {

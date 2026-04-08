@@ -31,8 +31,12 @@ export default function VoiceChat() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
 
-      const API_HOST = window.location.hostname;
-      wsRef.current = new WebSocket(`ws://${API_HOST}:5000/api/voice/stream`);
+      const backendUrl = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000`;
+      const wsProtocol = backendUrl.startsWith('https') ? 'wss:' : 'ws:';
+      const wsHost = backendUrl.replace(/^https?:\/\//, '');
+      const wsUrl = `${wsProtocol}//${wsHost}/api/voice/stream`;
+      
+      wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
         wsRef.current.send(JSON.stringify({ type: 'start', sessionId }));
