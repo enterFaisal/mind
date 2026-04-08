@@ -452,7 +452,7 @@ wss.on("connection", (ws, req) => {
 
         console.log("[WSS] Opening ElevenLabs scribe_v2_realtime connection.");
         elevenWs = new WebSocket(
-          "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=ara",
+          "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=ara&sample_rate=16000",
           { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY } },
         );
 
