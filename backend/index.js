@@ -363,7 +363,6 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
         voice_settings: {
           stability: 0.8,
           similarity_boost: 0.75,
-          speed: 1.09,
         },
       },
       {
@@ -532,7 +531,6 @@ wss.on("connection", (ws, req) => {
             voice_settings: {
               stability: 0.8,
               similarity_boost: 0.75,
-              speed: 1.09,
             },
           },
           {
@@ -553,9 +551,14 @@ wss.on("connection", (ws, req) => {
         });
       }
     } catch (err) {
-      console.error("[WSS/AI Processing Error]", err);
+      console.error("[WSS/AI Processing Error]", err.message);
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "error", message: "Failed pipeline." }));
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: `Failed pipeline: ${err.message}`,
+          }),
+        );
       }
     }
   });

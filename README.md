@@ -202,4 +202,6 @@ Your API is now securely running at `https://YOUR_DROPLET_IP.nip.io`!
    - **Value**: `https://YOUR_DROPLET_IP.nip.io`
 7. Click **Deploy**.
 
+_Note: The frontend folder contains a `vercel.json` file which handles React Router's SPA routing. Without it, direct links to `/text` or `/dashboard` would result in 404 errors._
+
 The frontend will automatically configure WebSockets securely (`wss://`) and HTTP routes based on `VITE_API_URL`, successfully preventing Mixed Content errors!
