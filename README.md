@@ -1,4 +1,4 @@
-# MindBridge 🧠🌉
+# MindBridge 🧠
 
 MindBridge is an intelligent, empathetic digital emotional support system designed for hospitalized patients. Healthcare systems face critical nursing shortages, creating an "emotional support gap" that increases patient anxiety. MindBridge acts as a compassionate "Digital Sedation" tool, delivering continuous reassurance using Cognitive Behavioral Therapy (CBT) and Acceptance and Commitment Therapy (ACT) principles.
 
