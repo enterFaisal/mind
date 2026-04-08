@@ -167,8 +167,15 @@ async function getMindBridgeResponse(
     // Add current input
     contents.push({ role: "user", parts: [{ text: userInput }] });
 
+    // Enforce Arabic explicitly for the Voice pipeline
+    const finalSystemPrompt =
+      interfaceType === "voice"
+        ? SYSTEM_PROMPT +
+          "\n\n[CRITICAL RULE FOR THIS SESSION]: YOU MUST ONLY LISTEN TO AND RESPOND IN ARABIC (SAUDI NAJDI DIALECT). ABSOLUTELY NO ENGLISH. YOU WILL ONLY RESPOND IN ARABIC."
+        : SYSTEM_PROMPT;
+
     const apiConfig = {
-      systemInstruction: SYSTEM_PROMPT,
+      systemInstruction: finalSystemPrompt,
       responseMimeType: "application/json",
     };
 
@@ -307,6 +314,7 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     const sttFormData = new FormData();
     sttFormData.append("file", audioBlob, "audio.webm");
     sttFormData.append("model_id", "scribe_v2"); // Updated STT model ID to Scribe v2
+    sttFormData.append("language_code", "ara"); // Force Arabic STT
 
     let userText = "";
     try {
@@ -444,7 +452,7 @@ wss.on("connection", (ws, req) => {
 
         console.log("[WSS] Opening ElevenLabs scribe_v2_realtime connection.");
         elevenWs = new WebSocket(
-          "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime",
+          "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=ara",
           { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY } },
         );
 

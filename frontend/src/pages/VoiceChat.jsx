@@ -140,6 +140,9 @@ export default function VoiceChat() {
       <div className="text-center mb-12">
         <h2 className="text-3xl font-light text-teal-800 mb-4">MindBridge Support</h2>
         <p className="text-gray-600 font-medium">How are you feeling right now? Tap to talk.</p>
+        <p className="text-xs text-amber-600 font-semibold mt-3 bg-amber-50 inline-block px-3 py-1 rounded-full border border-amber-200 shadow-sm">
+          Note: Voice interface currently optimized for Arabic. (يدعم اللغة العربية)
+        </p>
       </div>
 
       <div className="flex flex-col items-center gap-8">
