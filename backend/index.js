@@ -431,6 +431,7 @@ wss.on("connection", (ws, req) => {
   }
 
   let elevenWs = null;
+  let elevenAudioBuffer = [];
   let currentSessionId = "anonymous_session";
   let currentTranscript = "";
   let currentVoicePref = "female";
@@ -441,15 +442,19 @@ wss.on("connection", (ws, req) => {
     try {
       if (isBinary) {
         // Binary audio passing directly to ElevenLabs
-        if (elevenWs && elevenWs.readyState === WebSocket.OPEN) {
+        if (elevenWs) {
           const base64Audio = msg.toString("base64");
-          elevenWs.send(
-            JSON.stringify({
-              message_type: "input_audio_chunk",
-              audio_base_64: base64Audio,
-              commit: false,
-            }),
-          );
+          const chunkMsg = JSON.stringify({
+            message_type: "input_audio_chunk",
+            audio_base_64: base64Audio,
+            commit: false,
+          });
+
+          if (elevenWs.readyState === WebSocket.OPEN) {
+            elevenWs.send(chunkMsg);
+          } else if (elevenWs.readyState === WebSocket.CONNECTING) {
+            elevenAudioBuffer.push(chunkMsg);
+          }
         }
         return;
       }
@@ -465,6 +470,7 @@ wss.on("connection", (ws, req) => {
         currentSessionId = data.sessionId || Date.now().toString();
         currentTranscript = "";
         currentVoicePref = data.voice || "female";
+        elevenAudioBuffer = []; // Clear buffer on new start
 
         console.log("[WSS] Opening ElevenLabs scribe_v2_realtime connection.");
         elevenWs = new WebSocket(
@@ -474,6 +480,9 @@ wss.on("connection", (ws, req) => {
 
         elevenWs.on("open", () => {
           console.log("[ElevenLabs] Real-Time STT Connection Authorized.");
+          while (elevenAudioBuffer.length > 0) {
+            elevenWs.send(elevenAudioBuffer.shift());
+          }
         });
 
         elevenWs.on("message", (elevenMsg) => {
