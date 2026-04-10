@@ -454,6 +454,9 @@ wss.on("connection", (ws, req) => {
       const data = JSON.parse(textMsg);
 
       if (data.type === "start") {
+        if (elevenWs && elevenWs.readyState === WebSocket.OPEN) {
+          elevenWs.close();
+        }
         currentSessionId = data.sessionId || Date.now().toString();
         currentTranscript = "";
 

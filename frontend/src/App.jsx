@@ -1,35 +1,26 @@
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import VoiceChat from './pages/VoiceChat';
 import TextChat from './pages/TextChat';
 import Dashboard from './pages/Dashboard';
-import { Home, Mic, MessageSquare, Activity } from 'lucide-react';
+import Setup from './pages/Setup';
+import Navigation from './components/Navigation';
 
 function App() {
   return (
     <Router>
-      <div className="min-h-screen flex flex-col">
-        <nav className="bg-white shadow-sm p-4 sticky top-0 z-50">
-          <div className="max-w-6xl mx-auto flex justify-between items-center">
-            <h1 className="text-xl font-bold text-teal-700 flex items-center gap-2">
-              <Home className="w-5 h-5" /> MindBridge
-            </h1>
-            <div className="flex gap-4">
-              <Link to="/voice" className="flex items-center gap-1 text-gray-600 hover:text-teal-600">
-                <Mic className="w-4 h-4"/> Voice
-              </Link>
-              <Link to="/text" className="flex items-center gap-1 text-gray-600 hover:text-teal-600">
-                <MessageSquare className="w-4 h-4"/> Text
-              </Link>
-              <Link to="/dashboard" className="flex items-center gap-1 text-gray-600 hover:text-indigo-600">
-                <Activity className="w-4 h-4"/> Dashboard
-              </Link>
-            </div>
-          </div>
-        </nav>
+      <div className="h-screen h-[100dvh] flex flex-col bg-gradient-to-br from-[#f0fdff] to-[#e8fcf9] relative overflow-hidden">
+        
+        {/* Abstract Blobs */}
+        <div className="absolute top-20 -left-20 w-96 h-96 bg-[#d0f5ee] rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob"></div>
+        <div className="absolute top-40 right-20 w-72 h-72 bg-[#e0f2fe] rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-2000"></div>
+        <div className="absolute -bottom-32 left-40 w-96 h-96 bg-[#dcfce7] rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-4000"></div>
 
-        <main className="flex-1 w-full max-w-6xl mx-auto p-4">
+        <Navigation />
+
+        <main className="flex-1 w-full max-w-6xl mx-auto p-4 flex flex-col relative z-10 overflow-hidden">
           <Routes>
-            <Route path="/" element={<VoiceChat />} />
+            <Route path="/" element={<Setup />} />
+            <Route path="/home" element={<VoiceChat />} />
             <Route path="/voice" element={<VoiceChat />} />
             <Route path="/text" element={<TextChat />} />
             <Route path="/dashboard" element={<Dashboard />} />
