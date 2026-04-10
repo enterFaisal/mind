@@ -35,11 +35,9 @@ export default function Navigation() {
           <Link to="/text" className={getPillClasses(location.pathname === '/text')}>
             <MessageSquare className={`w-[18px] h-[18px] ${location.pathname === '/text' ? 'text-teal-500' : 'text-gray-400'}`}/> Text
           </Link>
-          {import.meta.env.DEV && (
-            <Link to="/dashboard" className={getPillClasses(location.pathname === '/dashboard')}>
-              <Activity className={`w-[18px] h-[18px] ${location.pathname === '/dashboard' ? 'text-indigo-500' : 'text-gray-400'}`}/> Dashboard
-            </Link>
-          )}
+          <Link to="/dashboard" className={getPillClasses(location.pathname === '/dashboard')}>
+            <Activity className={`w-[18px] h-[18px] ${location.pathname === '/dashboard' ? 'text-indigo-500' : 'text-gray-400'}`}/> Dashboard
+          </Link>
         </div>
       </div>
     </nav>
