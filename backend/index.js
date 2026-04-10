@@ -362,8 +362,12 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     broadcastLog(logEntry); // Instantly push AI interpretation to Dashboard before finishing slow TTS
 
     // 3. Stream TTS audio directly to the frontend for instant playback
-    const HAMSA_VOICE_ID =
+    let HAMSA_VOICE_ID =
       process.env.HAMSA_VOICE_ID || "84c234d1-962d-4008-99f4-0d1b28b7e2c4";
+    if (req.body.voice === "female" && process.env.HAMSA_FEMALE_VOICE_ID) {
+      HAMSA_VOICE_ID = process.env.HAMSA_FEMALE_VOICE_ID;
+    }
+
     const ttsResponse = await axios.post(
       `https://api.tryhamsa.com/v1/jobs/text-to-speech`,
       {
@@ -429,6 +433,7 @@ wss.on("connection", (ws, req) => {
   let elevenWs = null;
   let currentSessionId = "anonymous_session";
   let currentTranscript = "";
+  let currentVoicePref = "female";
 
   console.log("[WSS] Client connected for Real-Time WebSocket stream.");
 
@@ -459,6 +464,7 @@ wss.on("connection", (ws, req) => {
         }
         currentSessionId = data.sessionId || Date.now().toString();
         currentTranscript = "";
+        currentVoicePref = data.voice || "female";
 
         console.log("[WSS] Opening ElevenLabs scribe_v2_realtime connection.");
         elevenWs = new WebSocket(
@@ -544,8 +550,15 @@ wss.on("connection", (ws, req) => {
 
         // Trigger Hamsa low-latency TTS pipeline
         console.log("[WSS] Calling tryhamsa.com for TTS response...");
-        const HAMSA_VOICE_ID =
+        let HAMSA_VOICE_ID =
           process.env.HAMSA_VOICE_ID || "84c234d1-962d-4008-99f4-0d1b28b7e2c4";
+        if (
+          currentVoicePref === "female" &&
+          process.env.HAMSA_FEMALE_VOICE_ID
+        ) {
+          HAMSA_VOICE_ID = process.env.HAMSA_FEMALE_VOICE_ID;
+        }
+
         const ttsResponse = await axios.post(
           `https://api.tryhamsa.com/v1/jobs/text-to-speech`,
           {

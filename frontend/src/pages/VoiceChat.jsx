@@ -101,7 +101,8 @@ export default function VoiceChat() {
         });
       }
 
-      wsRef.current.send(JSON.stringify({ type: 'start', sessionId }));
+      const voicePref = localStorage.getItem('mindbridge_voice') || 'female';
+      wsRef.current.send(JSON.stringify({ type: 'start', sessionId, voice: voicePref }));
       setIsRecording(true);
       setIsProcessing(false);
 
@@ -253,7 +254,7 @@ export default function VoiceChat() {
       </div>
 
       {/* Transcript / Reply Output Bubble */}
-      {(transcript || reply) && (!isRecording && !isProcessing) && (
+      {/* {(transcript || reply) && (!isRecording && !isProcessing) && (
         <div className="mt-12 w-full max-w-3xl flex flex-col gap-4 animate-fade-in relative z-10 text-left">
            {transcript && (
              <div className="bg-white p-6 rounded-3xl rounded-tr-sm shadow-sm border border-gray-100 ml-auto w-4/5">
@@ -268,7 +269,7 @@ export default function VoiceChat() {
              </div>
            )}
         </div>
-      )}
+      )} */}
       
     </div>
   );
