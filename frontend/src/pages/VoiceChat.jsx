@@ -13,6 +13,7 @@ export default function VoiceChat() {
   const processorRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const playbackChunksRef = useRef([]);
+  const audioElRef = useRef(null);
 
   const sessionId = useMemo(() => {
     let id = localStorage.getItem('mindbridge_session_id');
@@ -52,10 +53,15 @@ export default function VoiceChat() {
            }
         } else if (msg.type === 'tts_done') {
            setIsProcessing(false);
-           const finalAudioBlob = new Blob(playbackChunksRef.current, { type: 'audio/mpeg' });
+           const finalAudioBlob = new Blob(playbackChunksRef.current, { type: 'audio/wav' });
            const audioUrl = URL.createObjectURL(finalAudioBlob);
-           const audio = new Audio(audioUrl);
-           audio.play().catch(e => console.error("[Audio] Playback error:", e));
+           if (audioElRef.current) {
+             audioElRef.current.src = audioUrl;
+             audioElRef.current.play().catch(e => console.error("[Audio] Playback error:", e));
+           } else {
+             const audio = new Audio(audioUrl);
+             audio.play().catch(e => console.error("[Audio] Playback error:", e));
+           }
         } else if (msg.type === 'error') {
            setReply("Something went wrong with the voice engine.");
            setIsProcessing(false);
@@ -139,6 +145,14 @@ export default function VoiceChat() {
   const stopRecording = () => {
     setIsRecording(false);
     setIsProcessing(true);
+
+    // Unlock audio playback on iOS during this user-gesture (tap).
+    // iOS Safari blocks Audio.play() unless it originates from a direct user tap.
+    // Playing a silent buffer here "unlocks" the element for later async playback.
+    const audio = new Audio();
+    audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+    audio.play().then(() => { audio.pause(); }).catch(() => {});
+    audioElRef.current = audio;
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'stop' }));
