@@ -53,9 +53,11 @@ export default function TextChat() {
     setIsLoading(true);
 
     try {
+      const langPref = localStorage.getItem('mindbridge_language') || 'EN';
       const response = await axios.post(`${API_BASE_URL}/api/chat`, {
         text: textToSend,
-        sessionId: sessionId
+        sessionId: sessionId,
+        language: langPref
       });
 
       console.log("AI Generated Text:", response.data.companion_reply);

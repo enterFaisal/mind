@@ -138,6 +138,7 @@ async function getMindBridgeResponse(
   userInput,
   sessionId,
   interfaceType = "text",
+  language = "EN",
 ) {
   try {
     // Build conversation history from interaction logs (last 4 turns for context - optimized for latency)
@@ -167,12 +168,24 @@ async function getMindBridgeResponse(
     // Add current input
     contents.push({ role: "user", parts: [{ text: userInput }] });
 
-    // Enforce Arabic explicitly for the Voice pipeline
-    const finalSystemPrompt =
-      interfaceType === "voice"
-        ? SYSTEM_PROMPT +
-          "\n\n[CRITICAL RULE FOR THIS SESSION]: YOU MUST ONLY LISTEN TO AND RESPOND IN ARABIC (SAUDI NAJDI DIALECT). ABSOLUTELY NO ENGLISH. YOU WILL ONLY RESPOND IN ARABIC."
-        : SYSTEM_PROMPT;
+    let finalSystemPrompt = SYSTEM_PROMPT;
+    if (interfaceType === "voice") {
+      if (language === "AR") {
+        finalSystemPrompt +=
+          "\n\n[CRITICAL RULE FOR THIS SESSION]: YOU MUST ONLY LISTEN TO AND RESPOND IN ARABIC (SAUDI NAJDI DIALECT). ABSOLUTELY NO ENGLISH. YOU WILL ONLY RESPOND IN ARABIC.";
+      } else {
+        finalSystemPrompt +=
+          "\n\n[CRITICAL RULE FOR THIS SESSION]: YOU MUST ONLY LISTEN TO AND RESPOND IN ENGLISH. Use a warm, calming, human-like conversational tone. ABSOLUTELY NO ARABIC. YOU WILL ONLY RESPOND IN ENGLISH.";
+      }
+    } else {
+      if (language === "AR") {
+        finalSystemPrompt +=
+          "\n\n[LANGUAGE PREFERENCE]: The user prefers Arabic (Saudi Najdi Dialect). Respond in Arabic unless they switch to English.";
+      } else {
+        finalSystemPrompt +=
+          "\n\n[LANGUAGE PREFERENCE]: The user prefers English. Respond in English unless they switch to Arabic.";
+      }
+    }
 
     const apiConfig = {
       systemInstruction: finalSystemPrompt,
@@ -267,12 +280,12 @@ async function getMindBridgeResponse(
  */
 app.post("/api/chat", async (req, res) => {
   try {
-    const { text, sessionId } = req.body;
+    const { text, sessionId, language } = req.body;
     if (!text) return res.status(400).json({ error: "Text is required" });
     if (!sessionId)
       return res.status(400).json({ error: "Session ID is required" });
 
-    const aiResponse = await getMindBridgeResponse(text, sessionId, "text");
+    const aiResponse = await getMindBridgeResponse(text, sessionId, "text", language || "EN");
 
     const logEntry = {
       id: Date.now().toString(),
@@ -313,8 +326,9 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     const audioBlob = new Blob([audioData], { type: "audio/mp3" }); // assume mp3/m4a/webm depending on recorder
     const sttFormData = new FormData();
     sttFormData.append("file", audioBlob, "audio.webm");
-    sttFormData.append("model_id", "scribe_v2"); // Updated STT model ID to Scribe v2
-    sttFormData.append("language_code", "ara"); // Force Arabic STT
+    const voiceLang = req.body.language || "EN";
+    sttFormData.append("model_id", "scribe_v2");
+    sttFormData.append("language_code", voiceLang === "AR" ? "ara" : "eng");
 
     let userText = "";
     try {
@@ -343,12 +357,12 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     // Clear uploaded file after reading
     fs.unlinkSync(req.file.path);
 
-    // 2. Get AI Response (Set interfaceType = "voice" to map to correct ENV models)
     const sessionId = req.body.sessionId || "anonymous_session";
     const aiResponse = await getMindBridgeResponse(
       userText,
       sessionId,
       "voice",
+      voiceLang,
     );
 
     const logEntry = {
@@ -361,7 +375,9 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     };
     broadcastLog(logEntry); // Instantly push AI interpretation to Dashboard before finishing slow TTS
 
-    // 3. Stream TTS audio directly to the frontend for instant playback
+    res.setHeader("X-Log-Entry", encodeURIComponent(JSON.stringify(logEntry)));
+    res.setHeader("Content-Type", "audio/mpeg");
+
     let HAMSA_VOICE_ID =
       process.env.HAMSA_VOICE_ID || "84c234d1-962d-4008-99f4-0d1b28b7e2c4";
     if (req.body.voice === "female" && process.env.HAMSA_FEMALE_VOICE_ID) {
@@ -370,10 +386,7 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
 
     const ttsResponse = await axios.post(
       `https://api.tryhamsa.com/v1/jobs/text-to-speech`,
-      {
-        text: aiResponse.companion_reply,
-        voiceId: HAMSA_VOICE_ID,
-      },
+      { text: aiResponse.companion_reply, voiceId: HAMSA_VOICE_ID },
       {
         headers: {
           Authorization: `Token ${process.env.HAMSA_API_KEY}`,
@@ -382,20 +395,10 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       },
     );
 
-    // Provide the JSON data in response headers so the frontend still gets the text/analytics
-    res.setHeader("X-Log-Entry", encodeURIComponent(JSON.stringify(logEntry)));
-
-    if (
-      ttsResponse.data &&
-      ttsResponse.data.data &&
-      ttsResponse.data.data.mediaUrl
-    ) {
-      const audioUrl = ttsResponse.data.data.mediaUrl;
-      const audioStreamResponse = await axios.get(audioUrl, {
+    if (ttsResponse.data?.data?.mediaUrl) {
+      const audioStreamResponse = await axios.get(ttsResponse.data.data.mediaUrl, {
         responseType: "stream",
       });
-      res.setHeader("Content-Type", "audio/mpeg");
-      // Pipe the audio directly to the user
       audioStreamResponse.data.pipe(res);
     } else {
       res.status(500).json({ error: "Failed to generate Hamsa TTS" });
@@ -435,6 +438,7 @@ wss.on("connection", (ws, req) => {
   let currentSessionId = "anonymous_session";
   let currentTranscript = "";
   let currentVoicePref = "female";
+  let currentLanguage = "EN";
 
   console.log("[WSS] Client connected for Real-Time WebSocket stream.");
 
@@ -470,11 +474,13 @@ wss.on("connection", (ws, req) => {
         currentSessionId = data.sessionId || Date.now().toString();
         currentTranscript = "";
         currentVoicePref = data.voice || "female";
-        elevenAudioBuffer = []; // Clear buffer on new start
+        currentLanguage = data.language || "EN";
+        elevenAudioBuffer = [];
 
-        console.log("[WSS] Opening ElevenLabs scribe_v2_realtime connection.");
+        const sttLangCode = currentLanguage === "AR" ? "ara" : "eng";
+        console.log(`[WSS] Opening ElevenLabs scribe_v2_realtime (lang: ${sttLangCode}).`);
         elevenWs = new WebSocket(
-          "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=ara&sample_rate=16000",
+          `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=${sttLangCode}&sample_rate=16000`,
           { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY } },
         );
 
@@ -535,11 +541,11 @@ wss.on("connection", (ws, req) => {
         console.log(`[User Said]: "${currentTranscript}"`);
         console.log(`============================================\n`);
 
-        // Call our Gemini fallback models
         const aiResponse = await getMindBridgeResponse(
           currentTranscript,
           currentSessionId,
           "voice",
+          currentLanguage,
         );
 
         const logEntry = {
@@ -557,23 +563,16 @@ wss.on("connection", (ws, req) => {
           ws.send(JSON.stringify({ type: "ai_response", data: logEntry }));
         }
 
-        // Trigger Hamsa low-latency TTS pipeline
-        console.log("[WSS] Calling tryhamsa.com for TTS response...");
+        console.log("[WSS] Calling tryhamsa.com for TTS...");
         let HAMSA_VOICE_ID =
           process.env.HAMSA_VOICE_ID || "84c234d1-962d-4008-99f4-0d1b28b7e2c4";
-        if (
-          currentVoicePref === "female" &&
-          process.env.HAMSA_FEMALE_VOICE_ID
-        ) {
+        if (currentVoicePref === "female" && process.env.HAMSA_FEMALE_VOICE_ID) {
           HAMSA_VOICE_ID = process.env.HAMSA_FEMALE_VOICE_ID;
         }
 
         const ttsResponse = await axios.post(
           `https://api.tryhamsa.com/v1/jobs/text-to-speech`,
-          {
-            text: aiResponse.companion_reply,
-            voiceId: HAMSA_VOICE_ID,
-          },
+          { text: aiResponse.companion_reply, voiceId: HAMSA_VOICE_ID },
           {
             headers: {
               Authorization: `Token ${process.env.HAMSA_API_KEY}`,
@@ -582,30 +581,18 @@ wss.on("connection", (ws, req) => {
           },
         );
 
-        // Hamsa returns a JSON with a URL to the media, not a direct binary stream
-        if (
-          ttsResponse.data &&
-          ttsResponse.data.data &&
-          ttsResponse.data.data.mediaUrl
-        ) {
+        if (ttsResponse.data?.data?.mediaUrl) {
           const audioUrl = ttsResponse.data.data.mediaUrl;
           console.log("[WSS] Hamsa TTS ready at URL:", audioUrl);
-
-          // Now fetch the actual audio stream from the returned URL
-          const audioStreamResponse = await axios.get(audioUrl, {
-            responseType: "stream",
-          });
+          const audioStreamResponse = await axios.get(audioUrl, { responseType: "stream" });
 
           audioStreamResponse.data.on("data", (chunk) => {
             if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
           });
-
           audioStreamResponse.data.on("end", () => {
             if (ws.readyState === WebSocket.OPEN)
               ws.send(JSON.stringify({ type: "tts_done" }));
-            console.log(
-              "[WSS] Finished sending Hamsa TTS MP3 chunks via WebSocket.",
-            );
+            console.log("[WSS] Finished sending Hamsa TTS chunks.");
           });
         } else {
           throw new Error("Invalid response from Hamsa TTS API");

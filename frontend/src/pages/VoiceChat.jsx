@@ -73,10 +73,10 @@ export default function VoiceChat() {
   };
 
   useEffect(() => {
-    connectWebSocket();
     return () => {
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, []);
@@ -102,7 +102,8 @@ export default function VoiceChat() {
       }
 
       const voicePref = localStorage.getItem('mindbridge_voice') || 'female';
-      wsRef.current.send(JSON.stringify({ type: 'start', sessionId, voice: voicePref }));
+      const langPref = localStorage.getItem('mindbridge_language') || 'EN';
+      wsRef.current.send(JSON.stringify({ type: 'start', sessionId, voice: voicePref, language: langPref }));
       setIsRecording(true);
       setIsProcessing(false);
 
