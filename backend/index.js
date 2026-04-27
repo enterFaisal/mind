@@ -285,7 +285,12 @@ app.post("/api/chat", async (req, res) => {
     if (!sessionId)
       return res.status(400).json({ error: "Session ID is required" });
 
-    const aiResponse = await getMindBridgeResponse(text, sessionId, "text", language || "EN");
+    const aiResponse = await getMindBridgeResponse(
+      text,
+      sessionId,
+      "text",
+      language || "EN",
+    );
 
     const logEntry = {
       id: Date.now().toString(),
@@ -321,17 +326,17 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       return res.status(400).json({ error: "Audio file is required" });
     }
 
-    // 1. Send Audio to ElevenLabs STT
-    const audioData = fs.readFileSync(req.file.path);
-    const audioBlob = new Blob([audioData], { type: "audio/mp3" }); // assume mp3/m4a/webm depending on recorder
-    const sttFormData = new FormData();
-    sttFormData.append("file", audioBlob, "audio.webm");
-    const voiceLang = req.body.language || "EN";
-    sttFormData.append("model_id", "scribe_v2");
-    sttFormData.append("language_code", voiceLang === "AR" ? "ara" : "eng");
-
     let userText = "";
+
     try {
+      const audioData = fs.readFileSync(req.file.path);
+      const audioBlob = new Blob([audioData], { type: "audio/mp3" });
+      const sttFormData = new FormData();
+      sttFormData.append("file", audioBlob, "audio.webm");
+      const voiceLang = req.body.language || "EN";
+      sttFormData.append("model_id", "scribe_v2");
+      sttFormData.append("language_code", voiceLang === "AR" ? "ara" : "eng");
+
       const sttResponse = await axios.post(
         "https://api.elevenlabs.io/v1/speech-to-text",
         sttFormData,
@@ -352,12 +357,15 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       );
       console.error("======================================================\n");
       userText = "I couldn't hear you clearly, can you try again?";
+    } finally {
+      // GUARANTEED CLEANUP: Prevents server storage exhaustion
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
     }
 
-    // Clear uploaded file after reading
-    fs.unlinkSync(req.file.path);
-
     const sessionId = req.body.sessionId || "anonymous_session";
+    const voiceLang = req.body.language || "EN";
     const aiResponse = await getMindBridgeResponse(
       userText,
       sessionId,
@@ -373,7 +381,7 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       userText: userText,
       ...aiResponse,
     };
-    broadcastLog(logEntry); // Instantly push AI interpretation to Dashboard before finishing slow TTS
+    broadcastLog(logEntry);
 
     res.setHeader("X-Log-Entry", encodeURIComponent(JSON.stringify(logEntry)));
     res.setHeader("Content-Type", "audio/mpeg");
@@ -396,27 +404,22 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     );
 
     if (ttsResponse.data?.data?.mediaUrl) {
-      const audioStreamResponse = await axios.get(ttsResponse.data.data.mediaUrl, {
-        responseType: "stream",
-      });
+      const audioStreamResponse = await axios.get(
+        ttsResponse.data.data.mediaUrl,
+        {
+          responseType: "stream",
+        },
+      );
       audioStreamResponse.data.pipe(res);
     } else {
       res.status(500).json({ error: "Failed to generate Hamsa TTS" });
     }
   } catch (err) {
     console.error("\n================ /API/VOICE ROUTE ERROR ===============");
-    console.error("Time:", new Date().toISOString());
     console.error("Error Message:", err.message);
-    console.error("Error Stack:", err.stack);
-    console.error(
-      "Error Response Data:",
-      JSON.stringify(err?.response?.data, null, 2),
-    );
-    console.error("=======================================================\n");
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
 /**
  * Dashboard Log Endpoints
  */
@@ -478,7 +481,9 @@ wss.on("connection", (ws, req) => {
         elevenAudioBuffer = [];
 
         const sttLangCode = currentLanguage === "AR" ? "ara" : "eng";
-        console.log(`[WSS] Opening ElevenLabs scribe_v2_realtime (lang: ${sttLangCode}).`);
+        console.log(
+          `[WSS] Opening ElevenLabs scribe_v2_realtime (lang: ${sttLangCode}).`,
+        );
         elevenWs = new WebSocket(
           `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=${sttLangCode}&sample_rate=16000`,
           { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY } },
@@ -566,7 +571,10 @@ wss.on("connection", (ws, req) => {
         console.log("[WSS] Calling tryhamsa.com for TTS...");
         let HAMSA_VOICE_ID =
           process.env.HAMSA_VOICE_ID || "84c234d1-962d-4008-99f4-0d1b28b7e2c4";
-        if (currentVoicePref === "female" && process.env.HAMSA_FEMALE_VOICE_ID) {
+        if (
+          currentVoicePref === "female" &&
+          process.env.HAMSA_FEMALE_VOICE_ID
+        ) {
           HAMSA_VOICE_ID = process.env.HAMSA_FEMALE_VOICE_ID;
         }
 
@@ -584,7 +592,9 @@ wss.on("connection", (ws, req) => {
         if (ttsResponse.data?.data?.mediaUrl) {
           const audioUrl = ttsResponse.data.data.mediaUrl;
           console.log("[WSS] Hamsa TTS ready at URL:", audioUrl);
-          const audioStreamResponse = await axios.get(audioUrl, { responseType: "stream" });
+          const audioStreamResponse = await axios.get(audioUrl, {
+            responseType: "stream",
+          });
 
           audioStreamResponse.data.on("data", (chunk) => {
             if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
