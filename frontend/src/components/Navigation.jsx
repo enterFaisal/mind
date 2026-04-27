@@ -1,11 +1,13 @@
 import { Link, useLocation } from 'react-router-dom';
 import logoUrl from '../assets/logo.svg';
-import { Home, Mic, MessageSquare, Activity } from 'lucide-react';
+import { Activity, LogOut, Mic, MessageSquare, Shield, Stethoscope } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 export default function Navigation() {
   const location = useLocation();
+  const { currentUser, logout } = useAuth();
 
-  if (location.pathname === '/') return null;
+  if (location.pathname === '/login' || location.pathname === '/setup') return null;
 
   const getPillClasses = (isActive) => {
     return `flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full transition-all font-medium text-sm sm:text-[16px] ${
@@ -27,20 +29,41 @@ export default function Navigation() {
           </div>
         </div>
         
-        <div className="flex gap-0.5 sm:gap-1 p-0.5 sm:p-1 bg-white shadow-sm border border-gray-100 rounded-full items-center shrink-0">
-          <Link to="/voice" className={getPillClasses(location.pathname === '/home' || location.pathname === '/voice')}>
-            <Mic className={`w-4 h-4 sm:w-[18px] sm:h-[18px] ${location.pathname === '/home' || location.pathname === '/voice' ? 'text-teal-600' : 'text-gray-400'}`}/> 
-            <span className="hidden xs:inline sm:inline">Voice</span>
-          </Link>
-          <Link to="/text" className={getPillClasses(location.pathname === '/text')}>
-            <MessageSquare className={`w-4 h-4 sm:w-[18px] sm:h-[18px] ${location.pathname === '/text' ? 'text-teal-500' : 'text-gray-400'}`}/> 
-            <span className="hidden xs:inline sm:inline">Text</span>
-          </Link>
-          <Link to="/dashboard" className={getPillClasses(location.pathname === '/dashboard')}>
-            <Activity className={`w-4 h-4 sm:w-[18px] sm:h-[18px] ${location.pathname === '/dashboard' ? 'text-indigo-500' : 'text-gray-400'}`}/> 
-            <span className="hidden xs:inline sm:inline">Dashboard</span>
-          </Link>
-        </div>
+        {currentUser && (
+          <div className="flex gap-0.5 sm:gap-1 p-0.5 sm:p-1 bg-white shadow-sm border border-gray-100 rounded-full items-center shrink-0">
+            {currentUser.role === 'PATIENT' && (
+              <>
+                <Link to="/chat" className={getPillClasses(location.pathname === '/chat')}>
+                  <Mic className={`w-4 h-4 sm:w-[18px] sm:h-[18px] ${location.pathname === '/chat' ? 'text-teal-600' : 'text-gray-400'}`}/> 
+                  <span className="hidden xs:inline sm:inline">Voice</span>
+                </Link>
+                <Link to="/chat/text" className={getPillClasses(location.pathname === '/chat/text')}>
+                  <MessageSquare className={`w-4 h-4 sm:w-[18px] sm:h-[18px] ${location.pathname === '/chat/text' ? 'text-teal-500' : 'text-gray-400'}`}/> 
+                  <span className="hidden xs:inline sm:inline">Text</span>
+                </Link>
+              </>
+            )}
+            {currentUser.role === 'DOCTOR' && (
+              <Link to="/doctor" className={getPillClasses(location.pathname.startsWith('/doctor'))}>
+                <Stethoscope className={`w-4 h-4 sm:w-[18px] sm:h-[18px] ${location.pathname.startsWith('/doctor') ? 'text-indigo-500' : 'text-gray-400'}`}/> 
+                <span className="hidden xs:inline sm:inline">Patients</span>
+              </Link>
+            )}
+            {currentUser.role === 'ADMIN' && (
+              <Link to="/admin" className={getPillClasses(location.pathname === '/admin')}>
+                <Shield className={`w-4 h-4 sm:w-[18px] sm:h-[18px] ${location.pathname === '/admin' ? 'text-indigo-500' : 'text-gray-400'}`}/> 
+                <span className="hidden xs:inline sm:inline">Admin</span>
+              </Link>
+            )}
+            <button
+              onClick={logout}
+              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full transition-all font-medium text-sm sm:text-[16px] text-gray-500 hover:text-red-600"
+            >
+              <LogOut className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
+          </div>
+        )}
       </div>
     </nav>
   );

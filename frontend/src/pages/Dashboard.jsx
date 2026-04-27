@@ -1,77 +1,52 @@
 import { API_BASE_URL } from "../config";
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import axios from 'axios';
-import { ShieldAlert, CheckCircle, Activity, Clock, HeartPulse, User, AlertTriangle, ThermometerSun, Info, UserCheck, MessageSquare, PlusCircle } from 'lucide-react';
+import { Activity, Clock, HeartPulse, User, AlertTriangle, ThermometerSun, Info, UserCheck, MessageSquare } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
-export default function Dashboard() {
+export default function Dashboard({ patientId, patientName = 'Patient' }) {
+  const { authHeaders, currentUser } = useAuth();
+  const activePatientId = patientId || currentUser?.id;
   const [logs, setLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
-  // Mock initial state data to display when there are no logs
-  const mockLogs = [
-    {
-      id: "mock1",
-      timestamp: new Date(Date.now() - 5000).toISOString(),
-      patient_sentiment: "Anxious",
-      crisis_risk_level: "High",
-      escalation_alert: true,
-      clinical_summary: "Patient reported sharp pain in chest and high anxiety about the upcoming procedure.",
-      type: "voice"
-    },
-    {
-      id: "mock2",
-      timestamp: new Date(Date.now() - 3600000).toISOString(),
-      patient_sentiment: "Calm",
-      crisis_risk_level: "Low",
-      escalation_alert: false,
-      clinical_summary: "Patient completed breathing exercise and felt calm.",
-      type: "text"
-    },
-    {
-      id: "mock3",
-      timestamp: new Date(Date.now() - 7200000).toISOString(),
-      patient_sentiment: "Frustrated",
-      crisis_risk_level: "Medium",
-      escalation_alert: false,
-      clinical_summary: "Waiting for pain medication, expressing mild frustration.",
-      type: "voice"
-    }
-  ];
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
-      // console.log("[Dashboard] Fetching live patient logs...");
-      
-      const response = await axios.get(`${API_BASE_URL}/api/logs`);
+      if (!activePatientId) return;
+
+      const response = await axios.get(`${API_BASE_URL}/api/logs/patient/${activePatientId}`, {
+        headers: authHeaders,
+      });
       const data = response.data;
       
       const sorted = data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      
-      if (sorted.length > 0) {
-        setLogs(sorted);
-      } else {
-        setLogs(mockLogs);
-      }
-    } catch (error) {
+      setLogs(sorted);
+    } catch {
       console.error("\n================ DASHBOARD FETCH ERROR ==================");
       // ... leaving rest of error block alone
-      setLogs(mockLogs);
+      setLogs([]);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [activePatientId, authHeaders]);
 
   useEffect(() => {
+    if (!activePatientId || !currentUser) return undefined;
     fetchLogs(); // 1. Get initial load of existing backlog
     
     // 2. Open an SSE connection instantly catching new data pushed from backend without polling
     
-    const eventSource = new EventSource(`${API_BASE_URL}/api/logs/stream`);
+    const streamParams = new URLSearchParams({
+      patientId: activePatientId,
+      userId: currentUser.id,
+    });
+    const eventSource = new EventSource(`${API_BASE_URL}/api/logs/stream?${streamParams.toString()}`);
     
     eventSource.onmessage = (event) => {
       try {
         const newLogEntry = JSON.parse(event.data);
+        if (newLogEntry.patientId !== activePatientId) return;
         console.log("[Dashboard] SSE Realtime Push Received:", newLogEntry);
         setLogs(prev => {
           // Prepend new log pushing older ones down automatically instantly
@@ -90,7 +65,7 @@ export default function Dashboard() {
     return () => {
       eventSource.close();
     };
-  }, []);
+  }, [activePatientId, currentUser, fetchLogs]);
 
   const handleAcknowledge = (id) => {
     setAcknowledgedAlerts(prev => ({ ...prev, [id]: true }));
@@ -139,8 +114,8 @@ export default function Dashboard() {
           </div>
           <div className="min-w-0">
             <h1 className="text-base sm:text-xl font-bold text-slate-800 flex items-center gap-2 flex-wrap">
-              <span className="truncate">patient_402</span>
-               <span className="text-xs sm:text-sm font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200 whitespace-nowrap">Room: 402</span>
+              <span className="truncate">{patientName}</span>
+               <span className="text-xs sm:text-sm font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200 whitespace-nowrap">{activePatientId}</span>
             </h1>
             <p className="text-xs sm:text-sm flex items-center gap-2 mt-0.5 sm:mt-1 font-medium text-slate-600">
               <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse inline-block shrink-0"></span>

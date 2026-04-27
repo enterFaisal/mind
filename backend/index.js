@@ -7,6 +7,17 @@ const { GoogleGenAI } = require("@google/genai");
 const multer = require("multer");
 const axios = require("axios");
 const fs = require("fs");
+const {
+  ROLES,
+  DB_FILE,
+  createLog,
+  createUser,
+  deleteUser,
+  getLogs,
+  getLogsByPatientId,
+  getUserById,
+  getUsers,
+} = require("./db");
 
 dotenv.config();
 
@@ -27,16 +38,51 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // Audio Upload Middleware
 const upload = multer({ dest: "uploads/" });
 
-// In-Memory Storage for prototype data
-const interactionLogs = [];
 const sseClients = new Set(); // For real-time Server-Sent Events
 
-// Helper to add log and instantly broadcast to all connected dashboards
+// Helper to broadcast a saved log to connected dashboards.
 function broadcastLog(logEntry) {
-  interactionLogs.push(logEntry);
   const payload = JSON.stringify(logEntry);
   for (const client of sseClients) {
-    client.write(`data: ${payload}\n\n`);
+    if (!client.patientId || client.patientId === logEntry.patientId) {
+      client.res.write(`data: ${payload}\n\n`);
+    }
+  }
+}
+
+function publicUser(user) {
+  if (!user) return null;
+  return { id: user.id, name: user.name, role: user.role };
+}
+
+function getRequester(req) {
+  return getUserById(req.headers["x-user-id"]);
+}
+
+function requireRole(...allowedRoles) {
+  return (req, res, next) => {
+    const requester = getRequester(req);
+    if (!requester || !allowedRoles.includes(requester.role)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    req.user = requester;
+    next();
+  };
+}
+
+function getPatientOrReject(patientId, res) {
+  const patient = getUserById(patientId);
+  if (!patient || patient.role !== ROLES.PATIENT) {
+    res.status(404).json({ error: "Patient not found" });
+    return null;
+  }
+  return patient;
+}
+
+function cleanupUpload(file) {
+  if (file && fs.existsSync(file.path)) {
+    fs.unlinkSync(file.path);
   }
 }
 
@@ -130,21 +176,19 @@ AI:
 /**
  * Call Gemini Flash with enforced JSON output and conversation history
  * @param {string} userInput
- * @param {string} sessionId
+ * @param {string} patientId
  * @param {string} interfaceType - "text" or "voice" to determine which models to use
  * @returns {Promise<Object>} The parsed JSON
  */
 async function getMindBridgeResponse(
   userInput,
-  sessionId,
+  patientId,
   interfaceType = "text",
   language = "EN",
 ) {
   try {
     // Build conversation history from interaction logs (last 4 turns for context - optimized for latency)
-    const recentLogs = interactionLogs
-      .filter((log) => log.sessionId === sessionId)
-      .slice(-4);
+    const recentLogs = getLogsByPatientId(patientId).slice(0, 4).reverse();
     const contents = [];
 
     for (const log of recentLogs) {
@@ -276,30 +320,133 @@ async function getMindBridgeResponse(
 }
 
 /**
+ * ID-based authentication and RBAC endpoints.
+ */
+app.post("/api/auth/login", (req, res) => {
+  const { id } = req.body;
+  const user = getUserById(String(id || "").trim());
+
+  if (!user) {
+    return res.status(404).json({
+      error: "Account not found. Please contact the administrator.",
+    });
+  }
+
+  res.json(publicUser(user));
+});
+
+app.post("/api/admin/users", requireRole(ROLES.ADMIN), (req, res) => {
+  try {
+    const { id, name, role } = req.body;
+    const normalizedRole = String(role || "").toUpperCase();
+
+    if (![ROLES.DOCTOR, ROLES.PATIENT].includes(normalizedRole)) {
+      return res.status(400).json({ error: "Role must be DOCTOR or PATIENT" });
+    }
+
+    const user = createUser({ id, name, role: normalizedRole });
+    res.status(201).json(publicUser(user));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/users", requireRole(ROLES.ADMIN), (req, res) => {
+  res.json(getUsers().map(publicUser));
+});
+
+app.delete("/api/admin/users/:id", requireRole(ROLES.ADMIN), (req, res) => {
+  try {
+    const deletedUser = deleteUser(req.params.id);
+    res.json({
+      deleted: publicUser(deletedUser),
+      message:
+        deletedUser.role === ROLES.PATIENT
+          ? "Patient and patient logs deleted"
+          : "User deleted",
+    });
+  } catch (err) {
+    const status = err.message === "User not found" ? 404 : 400;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+app.get("/api/users/patients", requireRole(ROLES.ADMIN, ROLES.DOCTOR), (req, res) => {
+  res.json(getUsers().filter((user) => user.role === ROLES.PATIENT).map(publicUser));
+});
+
+app.get("/api/logs/patient/:id", (req, res) => {
+  const requester = getRequester(req);
+  const patientId = req.params.id;
+
+  if (!requester) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (
+    ![ROLES.ADMIN, ROLES.DOCTOR].includes(requester.role) &&
+    requester.id !== patientId
+  ) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (!getPatientOrReject(patientId, res)) return;
+
+  res.json(getLogsByPatientId(patientId));
+});
+
+app.get("/api/db/schema", requireRole(ROLES.ADMIN), (req, res) => {
+  res.json({
+    file: DB_FILE,
+    entities: {
+      User: {
+        id: "10-digit numeric string",
+        name: "String",
+        role: "ADMIN | DOCTOR | PATIENT",
+      },
+      Log: {
+        id: "String/UUID",
+        patientId: "Foreign Key -> User.id",
+        timestamp: "ISO Date String",
+        type: "text | voice",
+        userText: "String",
+        companion_reply: "String",
+        patient_sentiment: "String",
+        crisis_risk_level: "Low | Medium | High",
+        escalation_alert: "Boolean",
+        clinical_summary: "String",
+      },
+    },
+    constraints: {
+      userId: "Admin assigns an exactly 10-digit numeric ID. IDs must be unique.",
+    },
+  });
+});
+
+/**
  * Text Interface Endpoint
  */
 app.post("/api/chat", async (req, res) => {
   try {
-    const { text, sessionId, language } = req.body;
+    const { text, patientId, language } = req.body;
     if (!text) return res.status(400).json({ error: "Text is required" });
-    if (!sessionId)
-      return res.status(400).json({ error: "Session ID is required" });
+    if (!patientId)
+      return res.status(400).json({ error: "Patient ID is required" });
+    if (!getPatientOrReject(patientId, res)) return;
 
     const aiResponse = await getMindBridgeResponse(
       text,
-      sessionId,
+      patientId,
       "text",
       language || "EN",
     );
 
-    const logEntry = {
-      id: Date.now().toString(),
-      sessionId,
-      timestamp: new Date(),
+    const logEntry = createLog({
+      patientId,
       type: "text",
       userText: text,
       ...aiResponse,
-    };
+    });
 
     broadcastLog(logEntry);
 
@@ -324,6 +471,15 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "Audio file is required" });
+    }
+    const patientId = req.body.patientId;
+    if (!patientId) {
+      cleanupUpload(req.file);
+      return res.status(400).json({ error: "Patient ID is required" });
+    }
+    if (!getPatientOrReject(patientId, res)) {
+      cleanupUpload(req.file);
+      return;
     }
 
     let userText = "";
@@ -359,28 +515,23 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       userText = "I couldn't hear you clearly, can you try again?";
     } finally {
       // GUARANTEED CLEANUP: Prevents server storage exhaustion
-      if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      cleanupUpload(req.file);
     }
 
-    const sessionId = req.body.sessionId || "anonymous_session";
     const voiceLang = req.body.language || "EN";
     const aiResponse = await getMindBridgeResponse(
       userText,
-      sessionId,
+      patientId,
       "voice",
       voiceLang,
     );
 
-    const logEntry = {
-      id: Date.now().toString(),
-      sessionId,
-      timestamp: new Date(),
+    const logEntry = createLog({
+      patientId,
       type: "voice",
       userText: userText,
       ...aiResponse,
-    };
+    });
     broadcastLog(logEntry);
 
     res.setHeader("X-Log-Entry", encodeURIComponent(JSON.stringify(logEntry)));
@@ -424,7 +575,11 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
  * Dashboard Log Endpoints
  */
 app.get("/api/logs", (req, res) => {
-  res.json(interactionLogs);
+  const requester = getRequester(req);
+  if (!requester || ![ROLES.ADMIN, ROLES.DOCTOR].includes(requester.role)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  res.json(getLogs());
 });
 
 /**
@@ -438,7 +593,7 @@ wss.on("connection", (ws, req) => {
 
   let elevenWs = null;
   let elevenAudioBuffer = [];
-  let currentSessionId = "anonymous_session";
+  let currentPatientId = null;
   let currentTranscript = "";
   let currentVoicePref = "female";
   let currentLanguage = "EN";
@@ -474,7 +629,17 @@ wss.on("connection", (ws, req) => {
         if (elevenWs && elevenWs.readyState === WebSocket.OPEN) {
           elevenWs.close();
         }
-        currentSessionId = data.sessionId || Date.now().toString();
+        currentPatientId = data.patientId || null;
+        const patient = getUserById(currentPatientId);
+        if (!currentPatientId || !patient || patient.role !== ROLES.PATIENT) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "A valid patient ID is required for voice streaming.",
+            }),
+          );
+          return;
+        }
         currentTranscript = "";
         currentVoicePref = data.voice || "female";
         currentLanguage = data.language || "EN";
@@ -548,19 +713,17 @@ wss.on("connection", (ws, req) => {
 
         const aiResponse = await getMindBridgeResponse(
           currentTranscript,
-          currentSessionId,
+          currentPatientId,
           "voice",
           currentLanguage,
         );
 
-        const logEntry = {
-          id: Date.now().toString(),
-          sessionId: currentSessionId,
-          timestamp: new Date(),
+        const logEntry = createLog({
+          patientId: currentPatientId,
           type: "voice",
           userText: currentTranscript,
           ...aiResponse,
-        };
+        });
         broadcastLog(logEntry); // Trigger dashboard SSE
 
         // Send UI update
@@ -629,6 +792,18 @@ wss.on("connection", (ws, req) => {
 
 // SSE endpoint for zero-latency dashboard updates
 app.get("/api/logs/stream", (req, res) => {
+  const patientId = req.query.patientId ? String(req.query.patientId) : null;
+  const requester = getUserById(req.query.userId);
+
+  if (
+    patientId &&
+    (!requester ||
+      (![ROLES.ADMIN, ROLES.DOCTOR].includes(requester.role) &&
+        requester.id !== patientId))
+  ) {
+    return res.status(403).end();
+  }
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -636,10 +811,11 @@ app.get("/api/logs/stream", (req, res) => {
   // Send an initial heartbeat
   res.write(": heartbeat\n\n");
 
-  sseClients.add(res);
+  const client = { res, patientId };
+  sseClients.add(client);
 
   req.on("close", () => {
-    sseClients.delete(res);
+    sseClients.delete(client);
   });
 });
 

@@ -1,9 +1,11 @@
 import { API_BASE_URL } from "../config";
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Send, Loader2, Heart, Smile } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 export default function TextChat() {
+  const { currentUser } = useAuth();
   const [messages, setMessages] = useState([
     {
       id: 1,
@@ -15,15 +17,6 @@ export default function TextChat() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesContainerRef = useRef(null);
-
-  const sessionId = useMemo(() => {
-    let id = localStorage.getItem('mindbridge_session_id');
-    if (!id) {
-      id = Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('mindbridge_session_id', id);
-    }
-    return id;
-  }, []);
 
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -56,7 +49,7 @@ export default function TextChat() {
       const langPref = localStorage.getItem('mindbridge_language') || 'EN';
       const response = await axios.post(`${API_BASE_URL}/api/chat`, {
         text: textToSend,
-        sessionId: sessionId,
+        patientId: currentUser.id,
         language: langPref
       });
 
@@ -99,7 +92,7 @@ export default function TextChat() {
         <div className="bg-[#ccf6f1] p-1.5 rounded-full">
            <Heart className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-600" fill="currentColor" />
         </div>
-        <span className="font-medium text-sm sm:text-[16px]">You're in a safe space</span>
+        <span className="font-medium text-sm sm:text-[16px]">{currentUser?.name}, you're in a safe space</span>
       </div>
 
       {/* Main Chat Window */}

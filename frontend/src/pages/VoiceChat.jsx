@@ -1,8 +1,10 @@
 import { API_BASE_URL } from "../config";
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Loader2, BookOpen, Moon, Heart, Wind, Smile, Meh, Frown, AlertCircle, Sun } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 export default function VoiceChat() {
+  const { currentUser } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -14,15 +16,6 @@ export default function VoiceChat() {
   const mediaStreamRef = useRef(null);
   const playbackChunksRef = useRef([]);
   const audioElRef = useRef(null);
-
-  const sessionId = useMemo(() => {
-    let id = localStorage.getItem('mindbridge_session_id');
-    if (!id) {
-      id = Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('mindbridge_session_id', id);
-    }
-    return id;
-  }, []);
 
   const connectWebSocket = () => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
@@ -109,7 +102,7 @@ export default function VoiceChat() {
 
       const voicePref = localStorage.getItem('mindbridge_voice') || 'female';
       const langPref = localStorage.getItem('mindbridge_language') || 'EN';
-      wsRef.current.send(JSON.stringify({ type: 'start', sessionId, voice: voicePref, language: langPref }));
+      wsRef.current.send(JSON.stringify({ type: 'start', patientId: currentUser.id, voice: voicePref, language: langPref }));
       setIsRecording(true);
       setIsProcessing(false);
 
@@ -177,6 +170,9 @@ export default function VoiceChat() {
       
       {/* Header - compact on mobile */}
       <div className="text-center max-w-2xl mb-3 sm:mb-16">
+        <p className="text-sm sm:text-base font-semibold text-teal-700 mb-1 sm:mb-2">
+          Welcome, {currentUser?.name}
+        </p>
         <h1 className="text-xl sm:text-[2.75rem] font-bold text-gray-900 mb-1 sm:mb-4 tracking-tight">I'm here for you</h1>
         <p className="text-sm sm:text-xl text-gray-600 px-2 hidden sm:block">
           Take a moment to breathe. Share what's on your mind, and let's work through it together.
@@ -185,6 +181,21 @@ export default function VoiceChat() {
           Share what's on your mind, let's work through it together.
         </p>
       </div>
+
+      {(transcript || reply) && (
+        <div className="w-full max-w-2xl bg-white/80 backdrop-blur-sm border border-white/70 rounded-3xl shadow-sm p-4 mb-4 sm:mb-8">
+          {transcript && (
+            <p className="text-sm text-gray-500">
+              You said: <span className="font-semibold text-gray-800">{transcript}</span>
+            </p>
+          )}
+          {reply && (
+            <p className="text-sm text-teal-700 mt-2">
+              MindBridge: <span className="font-semibold">{reply}</span>
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Desktop: 3-column layout */}
       <div className="hidden md:grid grid-cols-3 gap-10 w-full items-stretch">

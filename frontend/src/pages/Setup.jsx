@@ -17,7 +17,7 @@ export default function Setup() {
       localStorage.setItem('mindbridge_setup_complete', 'true');
       localStorage.setItem('mindbridge_language', language || 'EN');
       localStorage.setItem('mindbridge_voice', voice || 'female');
-      navigate('/home');
+      navigate('/chat');
     }
   };
 
