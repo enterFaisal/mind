@@ -1,5 +1,5 @@
 // Bump this version string on every deploy to trigger SW update
-const CACHE_NAME = 'mindbridge-v2';
+const CACHE_NAME = 'mindbridge-v3';
 const PRECACHE_URLS = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
@@ -23,13 +23,14 @@ self.addEventListener('fetch', (event) => {
 
   // Never cache API calls or WebSocket upgrade requests
   const url = new URL(event.request.url);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
   if (url.pathname.startsWith('/api/')) return;
 
   event.respondWith(
     fetch(event.request)
       .then((response) => {
         const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => {});
         return response;
       })
       .catch(() => caches.match(event.request))
