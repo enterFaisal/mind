@@ -74,9 +74,7 @@ export default function Login() {
           {isLoading ? 'Checking account...' : 'Continue'}
         </button>
 
-        <p className="mt-5 text-xs text-gray-400">
-          Default seeded admin ID: <span className="font-semibold text-gray-500">1000000000</span>
-        </p>
+
       </form>
     </div>
   );

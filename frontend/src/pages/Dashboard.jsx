@@ -4,6 +4,62 @@ import axios from 'axios';
 import { Activity, Clock, HeartPulse, User, AlertTriangle, ThermometerSun, Info, UserCheck, MessageSquare } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TEN_MINUTES_MS = 10 * 60 * 1000;
+
+const average = (values) => {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+};
+
+const logClinicalScore = (log) => {
+  const risk = String(log.crisis_risk_level || 'Low').toLowerCase();
+  const sentiment = String(log.patient_sentiment || '').toLowerCase();
+  const riskScore = risk === 'high' ? 3 : risk === 'medium' ? 2 : 1;
+
+  let sentimentScore = 0;
+  if (sentiment.includes('hopeless') || sentiment.includes('terrified')) sentimentScore = 2;
+  else if (sentiment.includes('frustrat') || sentiment.includes('pain')) sentimentScore = 1.5;
+  else if (sentiment.includes('anxious') || sentiment.includes('lonely') || sentiment.includes('fear')) sentimentScore = 1;
+  else if (sentiment.includes('calm') || sentiment.includes('relaxed')) sentimentScore = -0.5;
+
+  return riskScore + sentimentScore + (log.escalation_alert ? 1 : 0);
+};
+
+const getEmotionalTrend = (last24HourLogs) => {
+  if (last24HourLogs.length < 2) {
+    return {
+      label: 'Stable',
+      detail: 'Not enough 24-hour history to confirm a direction.',
+    };
+  }
+
+  const chronologicalLogs = [...last24HourLogs].reverse();
+  const splitIndex = Math.max(1, Math.floor(chronologicalLogs.length / 2));
+  const olderScores = chronologicalLogs.slice(0, splitIndex).map(logClinicalScore);
+  const recentScores = chronologicalLogs.slice(splitIndex).map(logClinicalScore);
+  const difference = average(recentScores) - average(olderScores);
+
+  if (difference >= 0.35) {
+    return {
+      label: 'Deteriorating',
+      detail: 'Recent interactions show higher distress or risk than earlier in the last 24 hours.',
+    };
+  }
+
+  if (difference <= -0.35) {
+    return {
+      label: 'Improving',
+      detail: 'Recent interactions show lower distress or risk than earlier in the last 24 hours.',
+    };
+  }
+
+  return {
+    label: 'Stable',
+    detail: 'Recent interactions are broadly consistent with earlier 24-hour patterns.',
+  };
+};
+
 export default function Dashboard({ patientId, patientName = 'Patient' }) {
   const { authHeaders, currentUser } = useAuth();
   const activePatientId = patientId || currentUser?.id;
@@ -79,9 +135,44 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
   const latestVoiceExpressionLog = logs.find((log) => log.voice_expression_summary);
   const latestVoiceExpression =
     latestVoiceExpressionLog?.voice_expression_summary || 'No voice data yet';
+  const now = Date.now();
+  const last24HourLogs = logs.filter((log) => now - new Date(log.timestamp).getTime() <= DAY_MS);
+  const recent10MinuteLogs = logs.filter((log) => now - new Date(log.timestamp).getTime() <= TEN_MINUTES_MS);
 
   // Active alerts (escalation_alert true and not acknowledged)
   const activeAlerts = logs.filter(log => log.escalation_alert && !acknowledgedAlerts[log.id]);
+  const activeAlert = activeAlerts[0];
+  const escalationDescription =
+    activeAlert?.escalation_description ||
+    activeAlert?.clinical_summary ||
+    'Patient requested assistance or reported pain.';
+  const escalationReason =
+    activeAlert?.escalation_reason ||
+    'Escalation was triggered by the patient message.';
+  const recommendedAction =
+    activeAlert?.recommended_action ||
+    'Review patient needs and follow the escalation protocol.';
+  const emotionalTrend = getEmotionalTrend(last24HourLogs);
+  const last24HourEscalations = last24HourLogs.filter((log) => log.escalation_alert).length;
+  const repeatedHopelessnessCount = recent10MinuteLogs.filter((log) =>
+    String(log.patient_sentiment || '').toLowerCase().includes('hopeless')
+  ).length;
+  const elevatedRiskCount = last24HourLogs.filter((log) =>
+    ['medium', 'high'].includes(String(log.crisis_risk_level || '').toLowerCase())
+  ).length;
+  const aggregateClinicalSummary = (() => {
+    if (logs.length === 0) return 'No clinical interactions recorded yet.';
+    if (repeatedHopelessnessCount >= 2 && elevatedRiskCount > 0) {
+      return 'Patient expressed repeated hopelessness in the last 10 minutes with elevated risk. Urgent clinical review is recommended.';
+    }
+    if (last24HourEscalations > 0) {
+      return `Patient had ${last24HourEscalations} escalation alert${last24HourEscalations === 1 ? '' : 's'} in the last 24 hours. Recommended action: ${recommendedAction}`;
+    }
+    if (emotionalTrend.label === 'Deteriorating') {
+      return 'Patient condition appears to be deteriorating over the last 24 hours. Clinical review is recommended.';
+    }
+    return latestLog.clinical_summary || 'Patient condition is currently stable based on available interactions.';
+  })();
 
   // Color mappings
   const emotionColor = (emotion) => {
@@ -104,6 +195,12 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
     if (l === 'high') return 'bg-red-500 w-full';
     if (l === 'medium') return 'bg-orange-400 w-2/3';
     return 'bg-green-400 w-1/3';
+  };
+
+  const trendBadge = (trend) => {
+    if (trend === 'Deteriorating') return 'bg-red-100 text-red-800 border-red-200';
+    if (trend === 'Improving') return 'bg-green-100 text-green-800 border-green-200';
+    return 'bg-blue-100 text-blue-800 border-blue-200';
   };
 
   const voiceExpressionItems = (log) => {
@@ -144,11 +241,18 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
             <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6 text-red-600 flex-shrink-0 mt-0.5" />
             <div className="min-w-0">
               <h3 className="text-red-800 font-bold text-sm sm:text-lg leading-tight uppercase tracking-wide">Escalation Required</h3>
-              <p className="text-red-700 text-xs sm:text-sm mt-0.5 font-medium">Patient requested assistance or reported pain.</p>
+              <p className="text-red-700 text-xs sm:text-sm mt-0.5 font-medium">{escalationDescription}</p>
+              <p className="text-red-600 text-xs sm:text-sm mt-1">
+                <span className="font-bold">Why escalation:</span> {escalationReason}
+              </p>
+              <div className="mt-2 rounded-lg border border-red-200 bg-white/70 px-3 py-2 text-xs sm:text-sm text-red-800">
+                <p className="font-bold uppercase tracking-wide text-[10px] sm:text-xs text-red-700">Recommended Action</p>
+                <p className="mt-0.5 font-semibold">{recommendedAction}</p>
+              </div>
             </div>
           </div>
           <button 
-            onClick={() => handleAcknowledge(activeAlerts[0].id)}
+            onClick={() => handleAcknowledge(activeAlert.id)}
             className="bg-white text-red-700 border border-red-300 px-3 sm:px-4 py-1.5 sm:py-2 font-semibold text-xs sm:text-sm rounded-lg hover:bg-red-50 transition-colors shadow-sm whitespace-nowrap w-full sm:w-auto text-center"
           >
             Acknowledge
@@ -211,6 +315,34 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
               <p className="text-xs text-slate-400 mt-1">Hume unavailable</p>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* 24-HOUR CLINICAL OVERVIEW */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-6">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h3 className="text-xs sm:text-sm font-bold text-slate-500 uppercase tracking-wider">Emotional Trend</h3>
+            <span className="text-[10px] sm:text-xs font-semibold bg-slate-100 text-slate-600 px-2 py-1 rounded-full border border-slate-200">
+              Last 24h
+            </span>
+          </div>
+          <span className={`inline-flex px-3 py-1.5 text-xs sm:text-sm font-bold uppercase rounded-md border shadow-sm ${trendBadge(emotionalTrend.label)}`}>
+            {emotionalTrend.label}
+          </span>
+          <p className="text-xs sm:text-sm text-slate-600 mt-3 leading-relaxed">
+            {emotionalTrend.detail}
+          </p>
+        </div>
+
+        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h3 className="text-xs sm:text-sm font-bold text-slate-500 uppercase tracking-wider">Clinical Summary</h3>
+            <Info className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400" />
+          </div>
+          <p className="text-sm sm:text-base font-semibold text-slate-800 leading-relaxed">
+            {aggregateClinicalSummary}
+          </p>
         </div>
       </div>
 

@@ -31,6 +31,9 @@ function createInitialState() {
         patient_sentiment: "String",
         crisis_risk_level: "String",
         escalation_alert: "Boolean",
+        escalation_description: "String",
+        escalation_reason: "String",
+        recommended_action: "String",
         clinical_summary: "String",
         voice_expressions: "Array<{ name: String, score: Number }>",
         voice_expression_summary: "String",
@@ -84,6 +87,9 @@ function ensureDatabase() {
         patient_sentiment TEXT NOT NULL DEFAULT 'Unknown',
         crisis_risk_level TEXT NOT NULL DEFAULT 'Low',
         escalation_alert INTEGER NOT NULL DEFAULT 0,
+        escalation_description TEXT NOT NULL DEFAULT '',
+        escalation_reason TEXT NOT NULL DEFAULT '',
+        recommended_action TEXT NOT NULL DEFAULT '',
         clinical_summary TEXT NOT NULL DEFAULT '',
         voice_expressions TEXT NOT NULL DEFAULT '[]',
         voice_expression_summary TEXT NOT NULL DEFAULT '',
@@ -96,9 +102,19 @@ function ensureDatabase() {
         ON logs(timestamp DESC);
     `);
 
+    ensureLogColumn(database, "escalation_description", "TEXT NOT NULL DEFAULT ''");
+    ensureLogColumn(database, "escalation_reason", "TEXT NOT NULL DEFAULT ''");
+    ensureLogColumn(database, "recommended_action", "TEXT NOT NULL DEFAULT ''");
     migrateLegacyJsonIfNeeded(database);
     seedInitialAdminIfNeeded(database);
   }
+}
+
+function ensureLogColumn(db, columnName, columnDefinition) {
+  const existingColumns = db.prepare("PRAGMA table_info(logs)").all();
+  if (existingColumns.some((column) => column.name === columnName)) return;
+
+  db.exec(`ALTER TABLE logs ADD COLUMN ${columnName} ${columnDefinition}`);
 }
 
 function seedInitialAdminIfNeeded(db) {
@@ -137,11 +153,14 @@ function migrateLegacyJsonIfNeeded(db) {
       patient_sentiment,
       crisis_risk_level,
       escalation_alert,
+      escalation_description,
+      escalation_reason,
+      recommended_action,
       clinical_summary,
       voice_expressions,
       voice_expression_summary,
       voice_expression_error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   db.exec("BEGIN");
@@ -161,6 +180,9 @@ function migrateLegacyJsonIfNeeded(db) {
         log.patient_sentiment || "Unknown",
         log.crisis_risk_level || "Low",
         log.escalation_alert ? 1 : 0,
+        log.escalation_description || "",
+        log.escalation_reason || "",
+        log.recommended_action || "",
         log.clinical_summary || "",
         JSON.stringify(Array.isArray(log.voice_expressions) ? log.voice_expressions : []),
         log.voice_expression_summary || "",
@@ -195,6 +217,9 @@ function rowToLog(row) {
     patient_sentiment: row.patient_sentiment,
     crisis_risk_level: row.crisis_risk_level,
     escalation_alert: Boolean(row.escalation_alert),
+    escalation_description: row.escalation_description,
+    escalation_reason: row.escalation_reason,
+    recommended_action: row.recommended_action,
     clinical_summary: row.clinical_summary,
     voice_expressions: JSON.parse(row.voice_expressions || "[]"),
     voice_expression_summary: row.voice_expression_summary,
@@ -277,6 +302,16 @@ function getLogsByPatientId(patientId) {
     .map(rowToLog);
 }
 
+function getRecentLogsByPatientId(patientId, limit = 4) {
+  const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || 4, 12));
+  return getDatabase()
+    .prepare(
+      "SELECT * FROM logs WHERE patient_id = ? ORDER BY timestamp DESC LIMIT ?",
+    )
+    .all(patientId, safeLimit)
+    .map(rowToLog);
+}
+
 function getLogs() {
   return getDatabase()
     .prepare("SELECT * FROM logs ORDER BY timestamp DESC")
@@ -295,6 +330,9 @@ function createLog(log) {
     patient_sentiment: log.patient_sentiment || "Unknown",
     crisis_risk_level: log.crisis_risk_level || "Low",
     escalation_alert: Boolean(log.escalation_alert),
+    escalation_description: log.escalation_description || "",
+    escalation_reason: log.escalation_reason || "",
+    recommended_action: log.recommended_action || "",
     clinical_summary: log.clinical_summary || "",
     voice_expressions: Array.isArray(log.voice_expressions)
       ? log.voice_expressions
@@ -315,11 +353,14 @@ function createLog(log) {
         patient_sentiment,
         crisis_risk_level,
         escalation_alert,
+        escalation_description,
+        escalation_reason,
+        recommended_action,
         clinical_summary,
         voice_expressions,
         voice_expression_summary,
         voice_expression_error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       savedLog.id,
@@ -331,12 +372,46 @@ function createLog(log) {
       savedLog.patient_sentiment,
       savedLog.crisis_risk_level,
       savedLog.escalation_alert ? 1 : 0,
+      savedLog.escalation_description,
+      savedLog.escalation_reason,
+      savedLog.recommended_action,
       savedLog.clinical_summary,
       JSON.stringify(savedLog.voice_expressions),
       savedLog.voice_expression_summary,
       savedLog.voice_expression_error,
     );
   return savedLog;
+}
+
+function updateLogVoiceExpressions(logId, voiceExpressionData) {
+  const existingLog = getDatabase()
+    .prepare("SELECT * FROM logs WHERE id = ?")
+    .get(logId);
+  if (!existingLog) return null;
+
+  getDatabase()
+    .prepare(`
+      UPDATE logs
+      SET
+        voice_expressions = ?,
+        voice_expression_summary = ?,
+        voice_expression_error = ?
+      WHERE id = ?
+    `)
+    .run(
+      JSON.stringify(
+        Array.isArray(voiceExpressionData.voice_expressions)
+          ? voiceExpressionData.voice_expressions
+          : [],
+      ),
+      voiceExpressionData.voice_expression_summary || "",
+      voiceExpressionData.voice_expression_error || "",
+      logId,
+    );
+
+  return rowToLog(
+    getDatabase().prepare("SELECT * FROM logs WHERE id = ?").get(logId),
+  );
 }
 
 ensureDatabase();
@@ -349,7 +424,9 @@ module.exports = {
   validateUserId,
   getLogs,
   getLogsByPatientId,
+  getRecentLogsByPatientId,
   getUserById,
   getUsers,
   createLog,
+  updateLogVoiceExpressions,
 };

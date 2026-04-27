@@ -16,8 +16,10 @@ const {
   deleteUser,
   getLogs,
   getLogsByPatientId,
+  getRecentLogsByPatientId,
   getUserById,
   getUsers,
+  updateLogVoiceExpressions,
 } = require("./db");
 
 dotenv.config();
@@ -256,6 +258,24 @@ async function analyzeVoiceExpressions(recordingPath) {
   }
 }
 
+function analyzeVoiceExpressionsInBackground(recordingPath, logEntry) {
+  if (!recordingPath || !logEntry?.id) return;
+
+  analyzeVoiceExpressions(recordingPath)
+    .then((voiceExpressionData) => {
+      const updatedLogEntry = updateLogVoiceExpressions(
+        logEntry.id,
+        voiceExpressionData,
+      );
+      if (updatedLogEntry) {
+        broadcastLog(updatedLogEntry);
+      }
+    })
+    .catch((error) => {
+      console.error("[Hume] Background voice analysis failed:", error.message);
+    });
+}
+
 const SYSTEM_PROMPT = `
 
 You are "MindBridge", a voice-first AI providing Tier-1 psychological support to hospitalized patients.
@@ -282,6 +302,7 @@ Your goal is to reduce anxiety, provide reassurance, and gently support the pati
 - You are NOT a doctor. Never diagnose, suggest medication, or interpret symptoms.
 - Medical Rule: If the user asks for medical advice, gently redirect: "This is important to discuss with your medical team. I can help you arrange your thoughts to ask them."
 - Crisis Rule (CRITICAL): If the user expresses severe pain, suicidal thoughts, or severe hopelessness, STOP normal support. Respond briefly with concern and direct them to human help immediately. Set "escalation_alert" to true.
+- Recommended Action Rule: When escalation_alert is true, choose a direct staff action such as nursing visit within 15 minutes, notify physician, psychological assessment, calm patient before procedure, or review pain/physical discomfort.
 
 📊 OUTPUT FORMAT (STRICT JSON ONLY)
 You must ALWAYS return a valid JSON object. No markdown, no text outside JSON.
@@ -290,6 +311,9 @@ You must ALWAYS return a valid JSON object. No markdown, no text outside JSON.
   "patient_sentiment": "Emotion (e.g., Calm, Anxious, Terrified, Lonely, Frustrated, Hopeless)",
   "crisis_risk_level": "Low, Medium, or High",
   "escalation_alert": boolean (true if self-harm, medical request, pain, or severe distress),
+  "escalation_description": "Short staff-facing description if escalation_alert is true, otherwise empty string",
+  "escalation_reason": "Why escalation was triggered if escalation_alert is true, otherwise empty string",
+  "recommended_action": "Direct staff action if escalation_alert is true, otherwise empty string. Examples: nursing visit within 15 minutes, notify physician, psychological assessment, calm patient before procedure, review pain or physical discomfort.",
   "clinical_summary": "3–5 words summary (e.g., 'Pre-surgical anxiety', 'Expressed loneliness')"
 }
 
@@ -305,6 +329,9 @@ AI:
   "patient_sentiment": "Anxious",
   "crisis_risk_level": "Low",
   "escalation_alert": false,
+  "escalation_description": "",
+  "escalation_reason": "",
+  "recommended_action": "",
   "clinical_summary": "Pre-surgical anxiety"
 }
 
@@ -316,6 +343,9 @@ AI:
   "patient_sentiment": "Lonely",
   "crisis_risk_level": "Low",
   "escalation_alert": false,
+  "escalation_description": "",
+  "escalation_reason": "",
+  "recommended_action": "",
   "clinical_summary": "Feeling isolated and lonely"
 }
 
@@ -327,6 +357,9 @@ AI:
   "patient_sentiment": "Frustrated",
   "crisis_risk_level": "Medium",
   "escalation_alert": true,
+  "escalation_description": "Patient reports strong chest pain and asks about pain medication.",
+  "escalation_reason": "Physical pain and medication-related medical request",
+  "recommended_action": "Immediate nursing assessment and notify physician about chest pain.",
   "clinical_summary": "Experiencing physical chest pain"
 }
 
@@ -338,10 +371,86 @@ AI:
   "patient_sentiment": "Hopeless",
   "crisis_risk_level": "High",
   "escalation_alert": true,
+  "escalation_description": "Patient expressed hopelessness and intent to end their life.",
+  "escalation_reason": "Self-harm risk",
+  "recommended_action": "Urgent psychological assessment and continuous staff presence.",
   "clinical_summary": "Expressed suicidal ideation"
 }
 
 `;
+
+const VOICE_SYSTEM_PROMPT = `
+You are "MindBridge", a voice-first AI providing Tier-1 psychological support to hospitalized patients.
+Give short, warm support without medical advice.
+
+Rules:
+- Reply in 1-3 short sentences, optimized for TTS.
+- Start with emotional validation, then add one gentle next step or question.
+- Detect whether the user is speaking English or Arabic.
+- If Arabic is detected, use Saudi Najdi dialect only. If English is detected, use English only.
+- Never diagnose, suggest medication, interpret symptoms, or replace clinical staff.
+- For pain, medical questions, suicidal thoughts, severe hopelessness, or severe distress, briefly direct the patient to press the nurse call button or contact staff now, and set escalation_alert to true.
+- When escalation_alert is true, set recommended_action to one direct staff action: nursing visit within 15 minutes, notify physician, psychological assessment, calm patient before procedure, or review pain/physical discomfort.
+- Return valid JSON only:
+{
+  "companion_reply": "short spoken reply",
+  "patient_sentiment": "Calm | Anxious | Terrified | Lonely | Frustrated | Hopeless | Unknown",
+  "crisis_risk_level": "Low | Medium | High",
+  "escalation_alert": boolean,
+  "escalation_description": "short staff-facing description when escalation_alert is true, otherwise empty string",
+  "escalation_reason": "why escalation was triggered when escalation_alert is true, otherwise empty string",
+  "recommended_action": "direct staff action when escalation_alert is true, otherwise empty string",
+  "clinical_summary": "3-5 words"
+}
+`;
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function detectSupportedLanguage(text = "") {
+  return /[\u0600-\u06FF]/.test(text) ? "AR" : "EN";
+}
+
+async function generateGeminiText({ model, contents, config, stream = false }) {
+  const startedAt = Date.now();
+
+  if (stream && typeof ai.models.generateContentStream === "function") {
+    try {
+      const streamResponse = await ai.models.generateContentStream({
+        model,
+        contents,
+        config,
+      });
+      let text = "";
+
+      for await (const chunk of streamResponse) {
+        if (typeof chunk.text === "string") {
+          text += chunk.text;
+        } else if (typeof chunk.text === "function") {
+          text += chunk.text();
+        }
+      }
+
+      console.log(`[Gemini] ${model} streamed in ${Date.now() - startedAt}ms`);
+      return text;
+    } catch (streamError) {
+      console.warn(
+        `[Gemini] Streaming failed for ${model}; falling back to non-streaming:`,
+        streamError.message,
+      );
+    }
+  }
+
+  const response = await ai.models.generateContent({
+    model,
+    contents,
+    config,
+  });
+  console.log(`[Gemini] ${model} completed in ${Date.now() - startedAt}ms`);
+  return response.text;
+}
 
 /**
  * Call Gemini Flash with enforced JSON output and conversation history
@@ -357,8 +466,14 @@ async function getMindBridgeResponse(
   language = "EN",
 ) {
   try {
-    // Build conversation history from interaction logs (last 4 turns for context - optimized for latency)
-    const recentLogs = getLogsByPatientId(patientId).slice(0, 4).reverse();
+    const isVoice = interfaceType === "voice";
+    const detectedLanguage = userInput
+      ? detectSupportedLanguage(userInput)
+      : language === "AR"
+        ? "AR"
+        : "EN";
+    // Pull only the rows we need for the prompt; long patient histories can grow large.
+    const recentLogs = getRecentLogsByPatientId(patientId, 4).reverse();
     const contents = [];
 
     for (const log of recentLogs) {
@@ -367,13 +482,18 @@ async function getMindBridgeResponse(
         role: "model",
         parts: [
           {
-            text: JSON.stringify({
-              companion_reply: log.companion_reply,
-              patient_sentiment: log.patient_sentiment,
-              crisis_risk_level: log.crisis_risk_level || "Low",
-              escalation_alert: log.escalation_alert || false,
-              clinical_summary: log.clinical_summary || "",
-            }),
+            text: isVoice
+              ? log.companion_reply
+              : JSON.stringify({
+                  companion_reply: log.companion_reply,
+                  patient_sentiment: log.patient_sentiment,
+                  crisis_risk_level: log.crisis_risk_level || "Low",
+                  escalation_alert: log.escalation_alert || false,
+                  escalation_description: log.escalation_description || "",
+                  escalation_reason: log.escalation_reason || "",
+                  recommended_action: log.recommended_action || "",
+                  clinical_summary: log.clinical_summary || "",
+                }),
           },
         ],
       });
@@ -382,22 +502,22 @@ async function getMindBridgeResponse(
     // Add current input
     contents.push({ role: "user", parts: [{ text: userInput }] });
 
-    let finalSystemPrompt = SYSTEM_PROMPT;
-    if (interfaceType === "voice") {
-      if (language === "AR") {
+    let finalSystemPrompt = isVoice ? VOICE_SYSTEM_PROMPT : SYSTEM_PROMPT;
+    if (isVoice) {
+      if (detectedLanguage === "AR") {
         finalSystemPrompt +=
-          "\n\n[CRITICAL RULE FOR THIS SESSION]: YOU MUST ONLY LISTEN TO AND RESPOND IN ARABIC (SAUDI NAJDI DIALECT). ABSOLUTELY NO ENGLISH. YOU WILL ONLY RESPOND IN ARABIC.";
+          "\n\n[DETECTED LANGUAGE]: Arabic. Respond only in Saudi Najdi Arabic. Do not use English.";
       } else {
         finalSystemPrompt +=
-          "\n\n[CRITICAL RULE FOR THIS SESSION]: YOU MUST ONLY LISTEN TO AND RESPOND IN ENGLISH. Use a warm, calming, human-like conversational tone. ABSOLUTELY NO ARABIC. YOU WILL ONLY RESPOND IN ENGLISH.";
+          "\n\n[DETECTED LANGUAGE]: English. Respond only in English. Do not use Arabic.";
       }
     } else {
-      if (language === "AR") {
+      if (detectedLanguage === "AR") {
         finalSystemPrompt +=
-          "\n\n[LANGUAGE PREFERENCE]: The user prefers Arabic (Saudi Najdi Dialect). Respond in Arabic unless they switch to English.";
+          "\n\n[DETECTED LANGUAGE]: Arabic. Respond in Saudi Najdi Arabic only.";
       } else {
         finalSystemPrompt +=
-          "\n\n[LANGUAGE PREFERENCE]: The user prefers English. Respond in English unless they switch to Arabic.";
+          "\n\n[DETECTED LANGUAGE]: English. Respond in English only.";
       }
     }
 
@@ -406,26 +526,33 @@ async function getMindBridgeResponse(
       responseMimeType: "application/json",
     };
 
-    const mainModel =
-      interfaceType === "voice"
-        ? process.env.VOICE_MODEL_MAIN || "gemini-2.5-flash-lite"
-        : process.env.TEXT_MODEL_MAIN || "gemini-2.5-flash";
+    if (isVoice) {
+      apiConfig.maxOutputTokens = parsePositiveInteger(
+        process.env.VOICE_MAX_OUTPUT_TOKENS,
+        180,
+      );
+    }
 
-    const backupModel =
-      interfaceType === "voice"
-        ? process.env.VOICE_MODEL_BACKUP || "gemini-2.5-flash-lite"
-        : process.env.TEXT_MODEL_BACKUP || "gemini-2.5-flash-lite";
+    const mainModel = isVoice
+      ? process.env.VOICE_MODEL_MAIN || "gemini-2.5-flash-lite"
+      : process.env.TEXT_MODEL_MAIN || "gemini-2.5-flash";
 
-    let response;
+    const backupModel = isVoice
+      ? process.env.VOICE_MODEL_BACKUP || "gemini-2.5-flash-lite"
+      : process.env.TEXT_MODEL_BACKUP || "gemini-2.5-flash-lite";
+
+    let resultText;
+    const shouldStream = isVoice && process.env.VOICE_MODEL_STREAM !== "false";
     try {
       // 1. Attempt using primary model
-      response = await ai.models.generateContent({
+      resultText = await generateGeminiText({
         model: mainModel,
         contents: contents,
         config: apiConfig,
+        stream: shouldStream,
       });
     } catch (primaryError) {
-      if (mainModel === backupModel && interfaceType === "voice") {
+      if (mainModel === backupModel && isVoice) {
         throw primaryError; // If voice is failing on its only model, just throw
       }
       if (mainModel === backupModel) {
@@ -443,10 +570,11 @@ async function getMindBridgeResponse(
 
       // 2. Attempt using fallback model
       try {
-        response = await ai.models.generateContent({
+        resultText = await generateGeminiText({
           model: backupModel,
           contents: contents,
           config: apiConfig,
+          stream: shouldStream,
         });
       } catch (secondaryError) {
         console.warn(
@@ -458,15 +586,15 @@ async function getMindBridgeResponse(
         );
 
         // 3. Attempt using ultimate fallback model (lightweight, highly available)
-        response = await ai.models.generateContent({
+        resultText = await generateGeminiText({
           model: "gemini-2.5-flash-lite",
           contents: contents,
           config: apiConfig,
+          stream: shouldStream,
         });
       }
     }
 
-    const resultText = response.text;
     const parsedData = JSON.parse(resultText);
     return parsedData;
   } catch (error) {
@@ -483,6 +611,9 @@ async function getMindBridgeResponse(
     return {
       patient_sentiment: "Unknown",
       escalation_alert: false,
+      escalation_description: "",
+      escalation_reason: "",
+      recommended_action: "",
       companion_reply:
         "I'm having a little trouble thinking right now. Please hold on a moment.",
     };
@@ -541,9 +672,17 @@ app.delete("/api/admin/users/:id", requireRole(ROLES.ADMIN), (req, res) => {
   }
 });
 
-app.get("/api/users/patients", requireRole(ROLES.ADMIN, ROLES.DOCTOR), (req, res) => {
-  res.json(getUsers().filter((user) => user.role === ROLES.PATIENT).map(publicUser));
-});
+app.get(
+  "/api/users/patients",
+  requireRole(ROLES.ADMIN, ROLES.DOCTOR),
+  (req, res) => {
+    res.json(
+      getUsers()
+        .filter((user) => user.role === ROLES.PATIENT)
+        .map(publicUser),
+    );
+  },
+);
 
 app.get("/api/logs/patient/:id", (req, res) => {
   const requester = getRequester(req);
@@ -584,6 +723,9 @@ app.get("/api/db/schema", requireRole(ROLES.ADMIN), (req, res) => {
         patient_sentiment: "String",
         crisis_risk_level: "Low | Medium | High",
         escalation_alert: "Boolean",
+        escalation_description: "String",
+        escalation_reason: "String",
+        recommended_action: "String",
         clinical_summary: "String",
         voice_expressions: "Array<{ name: String, score: Number }>",
         voice_expression_summary: "String",
@@ -591,7 +733,8 @@ app.get("/api/db/schema", requireRole(ROLES.ADMIN), (req, res) => {
       },
     },
     constraints: {
-      userId: "Admin assigns an exactly 10-digit numeric ID. IDs must be unique.",
+      userId:
+        "Admin assigns an exactly 10-digit numeric ID. IDs must be unique.",
     },
   });
 });
@@ -664,9 +807,7 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       const audioBlob = new Blob([audioData], { type: "audio/mp3" });
       const sttFormData = new FormData();
       sttFormData.append("file", audioBlob, "audio.webm");
-      const voiceLang = req.body.language || "EN";
       sttFormData.append("model_id", "scribe_v2");
-      sttFormData.append("language_code", voiceLang === "AR" ? "ara" : "eng");
 
       const sttResponse = await axios.post(
         "https://api.elevenlabs.io/v1/speech-to-text",
@@ -700,16 +841,15 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       "voice",
       voiceLang,
     );
-    const voiceExpressionData = await analyzeVoiceExpressions(recordingPath);
 
     const logEntry = createLog({
       patientId,
       type: "voice",
       userText: userText,
       ...aiResponse,
-      ...voiceExpressionData,
     });
     broadcastLog(logEntry);
+    analyzeVoiceExpressionsInBackground(recordingPath, logEntry);
 
     res.setHeader("X-Log-Entry", encodeURIComponent(JSON.stringify(logEntry)));
     res.setHeader("Content-Type", "audio/mpeg");
@@ -825,12 +965,11 @@ wss.on("connection", (ws, req) => {
         elevenAudioBuffer = [];
         currentRecordingChunks = [];
 
-        const sttLangCode = currentLanguage === "AR" ? "ara" : "eng";
         console.log(
-          `[WSS] Opening ElevenLabs scribe_v2_realtime (lang: ${sttLangCode}).`,
+          "[WSS] Opening ElevenLabs scribe_v2_realtime (auto language).",
         );
         elevenWs = new WebSocket(
-          `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&language_code=${sttLangCode}&sample_rate=16000`,
+          "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&sample_rate=16000",
           { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY } },
         );
 
@@ -885,38 +1024,50 @@ wss.on("connection", (ws, req) => {
           elevenWs.close();
         }
 
-        let recordingPath = null;
-        try {
-          recordingPath = await saveRealtimeSttRecording(
-            currentPatientId,
-            currentRecordingChunks,
-          );
-        } catch (recordingErr) {
-          console.error("[Recordings] Failed to save STT audio:", recordingErr.message);
-        }
-
         if (!currentTranscript) currentTranscript = "Hello?";
+        currentLanguage = detectSupportedLanguage(currentTranscript);
 
         console.log(`\n================ STT RESULT ================`);
         console.log(`[User Said]: "${currentTranscript}"`);
+        console.log(`[Detected Language]: ${currentLanguage}`);
         console.log(`============================================\n`);
 
-        const aiResponse = await getMindBridgeResponse(
+        const recordingPromise = saveRealtimeSttRecording(
+          currentPatientId,
+          currentRecordingChunks,
+        ).catch((recordingErr) => {
+          console.error(
+            "[Recordings] Failed to save STT audio:",
+            recordingErr.message,
+          );
+          return null;
+        });
+
+        const aiResponsePromise = getMindBridgeResponse(
           currentTranscript,
           currentPatientId,
           "voice",
           currentLanguage,
         );
-        const voiceExpressionData = await analyzeVoiceExpressions(recordingPath);
+
+        const [recordingPath, aiResponse] = await Promise.all([
+          recordingPromise,
+          aiResponsePromise,
+        ]);
+
+        console.log(`\n============= VOICE TRANSCRIPT =============`);
+        console.log(`[User Said]: "${currentTranscript}"`);
+        console.log(`[MindBridge]: "${aiResponse.companion_reply}"`);
+        console.log(`============================================\n`);
 
         const logEntry = createLog({
           patientId: currentPatientId,
           type: "voice",
           userText: currentTranscript,
           ...aiResponse,
-          ...voiceExpressionData,
         });
         broadcastLog(logEntry); // Trigger dashboard SSE
+        analyzeVoiceExpressionsInBackground(recordingPath, logEntry);
 
         // Send UI update
         if (ws.readyState === WebSocket.OPEN) {

@@ -21,8 +21,6 @@ export default function VoiceChat() {
   const { currentUser } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [transcript, setTranscript] = useState('');
-  const [reply, setReply] = useState('');
 
   const wsRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -51,13 +49,14 @@ export default function VoiceChat() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'stt_progress') {
-           console.log("User Transcript:", msg.transcript);
-           setTranscript(msg.transcript);
+           console.debug('[VoiceChat] STT progress:', msg.transcript);
+           return;
         } else if (msg.type === 'ai_response') {
-           if (msg.data && msg.data.companion_reply) {
-             console.log("AI Generated Text:", msg.data.companion_reply);
-             setReply(msg.data.companion_reply);
-           }
+           console.groupCollapsed('[VoiceChat] Transcript');
+           console.log('You said:', msg.data?.userText || '');
+           console.log('MindBridge:', msg.data?.companion_reply || '');
+           console.groupEnd();
+           return;
         } else if (msg.type === 'tts_done') {
            setIsProcessing(false);
            const finalAudioBlob = new Blob(playbackChunksRef.current, { type: 'audio/wav' });
@@ -70,7 +69,7 @@ export default function VoiceChat() {
              audio.play().catch(e => console.error("[Audio] Playback error:", e));
            }
         } else if (msg.type === 'error') {
-           setReply("Something went wrong with the voice engine.");
+           console.error("[WS] Voice engine error:", msg.message || msg.error || msg);
            setIsProcessing(false);
         }
       } catch (err) {
@@ -96,8 +95,6 @@ export default function VoiceChat() {
 
   const startRecording = async () => {
     try {
-      setTranscript('');
-      setReply('');
       playbackChunksRef.current = [];
 
       // Ensure WS is connected
@@ -194,21 +191,6 @@ export default function VoiceChat() {
           Take a moment to breathe. Share what's on your mind, and let's work through it together.
         </p>
       </section>
-
-      {(transcript || reply) && (
-        <div className="w-full max-w-2xl mx-auto bg-white/85 backdrop-blur-sm border border-white/70 rounded-3xl shadow-sm p-4 mb-5 sm:mb-8">
-          {transcript && (
-            <p className="text-sm text-gray-500">
-              You said: <span className="font-semibold text-gray-800">{transcript}</span>
-            </p>
-          )}
-          {reply && (
-            <p className="text-sm text-teal-700 mt-2">
-              MindBridge: <span className="font-semibold">{reply}</span>
-            </p>
-          )}
-        </div>
-      )}
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 lg:gap-8 items-stretch">
         <section className="order-2 md:order-1 md:col-span-4 bg-white/80 backdrop-blur-sm rounded-[1.75rem] sm:rounded-[2rem] p-4 sm:p-6 shadow-sm border border-white/60">
