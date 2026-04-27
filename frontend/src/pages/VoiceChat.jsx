@@ -1,7 +1,21 @@
 import { API_BASE_URL } from "../config";
-import { useState, useRef, useEffect } from 'react';
+import { createElement, useState, useRef, useEffect } from 'react';
 import { Mic, Square, Loader2, BookOpen, Moon, Heart, Wind, Smile, Meh, Frown, AlertCircle, Sun } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+
+const aiFeatures = [
+  { label: 'Grounding', detail: 'Reset your focus', Icon: BookOpen, iconClass: 'bg-orange-100 text-orange-500' },
+  { label: 'Sleep stories', detail: 'Unwind at night', Icon: Moon, iconClass: 'bg-blue-100 text-blue-500' },
+  { label: 'Meditation', detail: 'Find a quiet moment', Icon: Heart, iconClass: 'bg-purple-100 text-purple-500' },
+  { label: 'Breathing', detail: 'Calm your body', Icon: Wind, iconClass: 'bg-green-100 text-green-500' },
+];
+
+const moodOptions = [
+  { label: 'Great', Icon: Smile, className: 'border-green-100 bg-green-50/60 text-green-700 hover:bg-green-50' },
+  { label: 'Okay', Icon: Meh, className: 'border-blue-100 bg-blue-50/60 text-blue-700 hover:bg-blue-50' },
+  { label: 'Stressed', Icon: Frown, className: 'border-orange-100 bg-orange-50/60 text-orange-700 hover:bg-orange-50' },
+  { label: 'Difficult', Icon: AlertCircle, className: 'border-red-100 bg-red-50/50 text-red-700 hover:bg-red-50' },
+];
 
 export default function VoiceChat() {
   const { currentUser } = useAuth();
@@ -165,25 +179,24 @@ export default function VoiceChat() {
     }
   };
 
+  const statusText = isRecording ? 'Listening...' : isProcessing ? 'Processing...' : 'Tap to speak';
+
   return (
-    <div className="flex flex-col items-center justify-start pt-2 sm:pt-10 pb-4 sm:pb-8 px-3 sm:px-0 w-full max-w-[1200px] mx-auto relative z-10 animate-fade-in flex-1 min-h-0">
-      
-      {/* Header - compact on mobile */}
-      <div className="text-center max-w-2xl mb-3 sm:mb-16">
-        <p className="text-sm sm:text-base font-semibold text-teal-700 mb-1 sm:mb-2">
+    <div className="w-full max-w-[1180px] mx-auto px-3 sm:px-4 pt-4 sm:pt-10 pb-6 sm:pb-10 relative z-10 animate-fade-in flex-1">
+      <section className="text-center max-w-3xl mx-auto mb-5 sm:mb-12">
+        <p className="inline-flex items-center rounded-full bg-white/70 border border-teal-100 px-3 py-1 text-xs sm:text-sm font-semibold text-teal-700 shadow-sm mb-3">
           Welcome, {currentUser?.name}
         </p>
-        <h1 className="text-xl sm:text-[2.75rem] font-bold text-gray-900 mb-1 sm:mb-4 tracking-tight">I'm here for you</h1>
-        <p className="text-sm sm:text-xl text-gray-600 px-2 hidden sm:block">
+        <h1 className="text-3xl sm:text-[2.75rem] font-bold text-gray-900 mb-2 sm:mb-4 tracking-tight leading-tight">
+          I'm here for you
+        </h1>
+        <p className="text-sm sm:text-xl text-gray-600 px-1 leading-relaxed">
           Take a moment to breathe. Share what's on your mind, and let's work through it together.
         </p>
-        <p className="text-sm text-gray-600 px-2 sm:hidden">
-          Share what's on your mind, let's work through it together.
-        </p>
-      </div>
+      </section>
 
       {(transcript || reply) && (
-        <div className="w-full max-w-2xl bg-white/80 backdrop-blur-sm border border-white/70 rounded-3xl shadow-sm p-4 mb-4 sm:mb-8">
+        <div className="w-full max-w-2xl mx-auto bg-white/85 backdrop-blur-sm border border-white/70 rounded-3xl shadow-sm p-4 mb-5 sm:mb-8">
           {transcript && (
             <p className="text-sm text-gray-500">
               You said: <span className="font-semibold text-gray-800">{transcript}</span>
@@ -197,172 +210,91 @@ export default function VoiceChat() {
         </div>
       )}
 
-      {/* Desktop: 3-column layout */}
-      <div className="hidden md:grid grid-cols-3 gap-10 w-full items-stretch">
-        
-        {/* Left Card: AI Features */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-[2rem] p-6 shadow-sm border border-white/50 relative flex flex-col justify-between h-full">
-          <div>
-             <h3 className="text-lg font-bold text-gray-900 mb-6">How you Can Use Our AI?</h3>
-             <div className="grid grid-cols-2 gap-4">
-               <button className="bg-white p-4 rounded-3xl shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-3 hover:shadow-md transition-all hover:-translate-y-1">
-                 <div className="bg-orange-100 p-3 rounded-2xl text-orange-500"><BookOpen className="w-6 h-6"/></div>
-                 <span className="text-sm font-medium text-gray-800 text-center leading-tight">Grounding<br/>Exercise</span>
-               </button>
-               <button className="bg-white p-4 rounded-3xl shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-3 hover:shadow-md transition-all hover:-translate-y-1">
-                 <div className="bg-blue-100 p-3 rounded-2xl text-blue-500"><Moon className="w-6 h-6"/></div>
-                 <span className="text-sm font-medium text-gray-800 text-center leading-tight">Sleep<br/>Stories</span>
-               </button>
-               <button className="bg-white p-4 rounded-3xl shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-3 hover:shadow-md transition-all hover:-translate-y-1">
-                 <div className="bg-purple-100 p-3 rounded-2xl text-purple-500"><Heart className="w-6 h-6"/></div>
-                 <span className="text-sm font-medium text-gray-800 text-center leading-tight">Meditation</span>
-               </button>
-               <button className="bg-white p-4 rounded-3xl shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-3 hover:shadow-md transition-all hover:-translate-y-1">
-                 <div className="bg-green-100 p-3 rounded-2xl text-green-500"><Wind className="w-6 h-6"/></div>
-                 <span className="text-sm font-medium text-gray-800 text-center leading-tight">Breathing<br/>Exercises</span>
-               </button>
-             </div>
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 lg:gap-8 items-stretch">
+        <section className="order-2 md:order-1 md:col-span-4 bg-white/80 backdrop-blur-sm rounded-[1.75rem] sm:rounded-[2rem] p-4 sm:p-6 shadow-sm border border-white/60">
+          <div className="flex items-start justify-between gap-3 mb-4 sm:mb-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600 mb-1">AI Features</p>
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900">Support for the moment</h2>
+            </div>
+            <div className="hidden sm:flex w-10 h-10 rounded-2xl bg-teal-50 text-teal-600 items-center justify-center">
+              <Heart className="w-5 h-5" />
+            </div>
           </div>
-        </div>
 
-        {/* Center: Microphone */}
-        <div className="flex flex-col items-center justify-center relative min-h-[300px]">
-          <div className={`absolute w-[22rem] h-[22rem] bg-[#e0f2fe]/60 rounded-full flex items-center justify-center ${isRecording ? 'animate-pulse' : ''} pointer-events-none`}>
-             <div className={`w-[16rem] h-[16rem] bg-[#dcfce7]/80 rounded-full flex items-center justify-center ${isRecording ? 'animate-ping' : ''} pointer-events-none`}>
-             </div>
+          <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-1 lg:grid-cols-2 gap-3">
+            {aiFeatures.map((feature) => (
+              <button
+                key={feature.label}
+                className="bg-white/90 p-3 sm:p-4 rounded-2xl sm:rounded-3xl shadow-sm border border-gray-100 flex items-center md:flex-col lg:items-center lg:flex-row gap-3 text-left md:text-center lg:text-left hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition-all"
+              >
+                <span className={`p-2.5 sm:p-3 rounded-2xl shrink-0 ${feature.iconClass}`}>
+                  {createElement(feature.Icon, { className: 'w-5 h-5 sm:w-6 sm:h-6' })}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-gray-900 leading-tight">{feature.label}</span>
+                  <span className="block text-xs text-gray-500 mt-0.5">{feature.detail}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="order-1 md:order-2 md:col-span-4 bg-white/55 md:bg-transparent border border-white/60 md:border-0 rounded-[2rem] md:rounded-none shadow-sm md:shadow-none min-h-[260px] sm:min-h-[320px] flex flex-col items-center justify-center relative overflow-hidden">
+          <div className={`absolute w-56 h-56 sm:w-[22rem] sm:h-[22rem] bg-[#e0f2fe]/60 rounded-full flex items-center justify-center ${isRecording ? 'animate-pulse' : ''} pointer-events-none`}>
+            <div className={`w-36 h-36 sm:w-[16rem] sm:h-[16rem] bg-[#dcfce7]/80 rounded-full flex items-center justify-center ${isRecording ? 'animate-ping' : ''} pointer-events-none`} />
           </div>
           <button
             onClick={isRecording ? stopRecording : startRecording}
             disabled={isProcessing}
-            className={`relative z-10 w-28 h-28 rounded-full flex items-center justify-center shadow-xl transition-all duration-300 ${
+            aria-label={statusText}
+            className={`relative z-10 w-24 h-24 sm:w-28 sm:h-28 rounded-full flex items-center justify-center shadow-xl transition-all duration-300 ${
               isRecording
-                ? 'bg-red-500 hover:bg-red-600 scale-110 shadow-red-200'
+                ? 'bg-red-500 hover:bg-red-600 scale-105 shadow-red-200'
                 : 'bg-[#21c55e] hover:bg-[#16a34a] hover:scale-105 shadow-green-200'
             } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             {isProcessing ? (
-              <Loader2 className="w-10 h-10 text-white animate-spin" />
+              <Loader2 className="w-9 h-9 sm:w-10 sm:h-10 text-white animate-spin" />
             ) : isRecording ? (
-              <Square className="w-10 h-10 text-white" fill="currentColor" />
+              <Square className="w-9 h-9 sm:w-10 sm:h-10 text-white" fill="currentColor" />
             ) : (
-              <Mic className="w-12 h-12 text-white" />
+              <Mic className="w-10 h-10 sm:w-12 sm:h-12 text-white" />
             )}
           </button>
-          <span className="relative z-10 mt-8 text-[17px] font-medium text-gray-700">
-            {isRecording ? 'Listening...' : isProcessing ? 'Processing...' : 'Tap to speak'}
+          <span className="relative z-10 mt-5 sm:mt-8 text-base sm:text-[17px] font-semibold text-gray-700">
+            {statusText}
           </span>
-        </div>
+          <span className="relative z-10 mt-2 text-xs sm:text-sm text-gray-500 px-6 text-center">
+            Your voice stays private between you and MindBridge.
+          </span>
+        </section>
 
-        {/* Right Card: Daily Check-in */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-[2rem] p-6 shadow-sm border border-white/50 flex flex-col justify-between h-full">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Sun className="w-6 h-6 text-[#21c55e]" />
-              <h3 className="text-xl font-bold text-gray-900">Daily Check-in</h3>
+        <section className="order-3 md:col-span-4 bg-white/80 backdrop-blur-sm rounded-[1.75rem] sm:rounded-[2rem] p-4 sm:p-6 shadow-sm border border-white/60 flex flex-col">
+          <div className="flex items-start gap-3 mb-4 sm:mb-6">
+            <span className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-green-50 text-[#21c55e] flex items-center justify-center shrink-0">
+              <Sun className="w-5 h-5 sm:w-6 sm:h-6" />
+            </span>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600 mb-1">Check-in</p>
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900">How are you feeling?</h2>
+              <p className="text-sm text-gray-500 mt-1">Choose the closest mood for today.</p>
             </div>
-            <p className="text-gray-500 mb-8 text-[15px]">How are you feeling today?</p>
           </div>
+
           <div className="grid grid-cols-2 gap-3 mt-auto">
-             <button className="py-4 px-2 rounded-2xl border flex flex-col items-center justify-center gap-2 border-green-100 bg-green-50/40 hover:bg-green-50 transition-colors text-green-700 font-medium h-[85px]">
-               <Smile className="w-6 h-6" /> Great
-             </button>
-             <button className="py-4 px-2 rounded-2xl border flex flex-col items-center justify-center gap-2 border-blue-100 bg-blue-50/50 hover:bg-blue-50 transition-colors text-blue-700 font-medium h-[85px]">
-               <Meh className="w-6 h-6" /> Okay
-             </button>
-             <button className="py-4 px-2 rounded-2xl border flex flex-col items-center justify-center gap-2 border-orange-100 bg-orange-50/50 hover:bg-orange-50 transition-colors text-orange-700 font-medium h-[85px]">
-               <Frown className="w-6 h-6" /> Stressed
-             </button>
-             <button className="py-4 px-2 rounded-2xl border flex flex-col items-center justify-center gap-2 border-red-100 bg-red-50/30 hover:bg-red-50 transition-colors text-red-700 font-medium h-[85px]">
-               <AlertCircle className="w-6 h-6" /> Difficult
-             </button>
+            {moodOptions.map((mood) => (
+              <button
+                key={mood.label}
+                className={`min-h-[76px] sm:min-h-[88px] py-3 px-2 rounded-2xl border flex flex-col items-center justify-center gap-2 font-semibold text-sm active:scale-[0.98] transition-all ${mood.className}`}
+              >
+                {createElement(mood.Icon, { className: 'w-5 h-5 sm:w-6 sm:h-6' })}
+                {mood.label}
+              </button>
+            ))}
           </div>
-        </div>
+        </section>
       </div>
-
-      {/* Mobile portrait layout */}
-      <div className="flex flex-col w-full md:hidden flex-1 min-h-0">
-        
-        {/* Mic section - grows to fill space, pushes cards to bottom */}
-        <div className="flex-1 flex flex-col items-center justify-center relative min-h-0">
-          <div className={`absolute w-44 h-44 bg-[#e0f2fe]/60 rounded-full flex items-center justify-center ${isRecording ? 'animate-pulse' : ''} pointer-events-none`}>
-             <div className={`w-28 h-28 bg-[#dcfce7]/80 rounded-full flex items-center justify-center ${isRecording ? 'animate-ping' : ''} pointer-events-none`}>
-             </div>
-          </div>
-          
-          <button
-            onClick={isRecording ? stopRecording : startRecording}
-            disabled={isProcessing}
-            className={`relative z-10 w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-xl transition-all duration-300 ${
-              isRecording
-                ? 'bg-red-500 hover:bg-red-600 scale-110 shadow-red-200'
-                : 'bg-[#21c55e] hover:bg-[#16a34a] hover:scale-105 shadow-green-200'
-            } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            {isProcessing ? (
-              <Loader2 className="w-7 h-7 text-white animate-spin" />
-            ) : isRecording ? (
-              <Square className="w-7 h-7 text-white" fill="currentColor" />
-            ) : (
-              <Mic className="w-8 h-8 text-white" />
-            )}
-          </button>
-          
-          <span className="relative z-10 mt-3 text-sm font-medium text-gray-700">
-            {isRecording ? 'Listening...' : isProcessing ? 'Processing...' : 'Tap to speak'}
-          </span>
-        </div>
-
-        {/* Two cards side-by-side, pinned near bottom */}
-        <div className="grid grid-cols-2 gap-2.5 w-full shrink-0 mb-12">
-          
-          {/* AI Features Card */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-3 shadow-sm border border-white/50 flex flex-col">
-            <h3 className="text-[13px] font-bold text-gray-900 mb-2.5">AI Features</h3>
-            <div className="grid grid-cols-2 gap-1.5">
-              <button className="bg-white p-2 rounded-xl shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform">
-                <div className="bg-orange-100 p-1.5 rounded-lg text-orange-500"><BookOpen className="w-4 h-4"/></div>
-                <span className="text-[10px] font-medium text-gray-700">Grounding</span>
-              </button>
-              <button className="bg-white p-2 rounded-xl shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform">
-                <div className="bg-blue-100 p-1.5 rounded-lg text-blue-500"><Moon className="w-4 h-4"/></div>
-                <span className="text-[10px] font-medium text-gray-700">Sleep</span>
-              </button>
-              <button className="bg-white p-2 rounded-xl shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform">
-                <div className="bg-purple-100 p-1.5 rounded-lg text-purple-500"><Heart className="w-4 h-4"/></div>
-                <span className="text-[10px] font-medium text-gray-700">Meditate</span>
-              </button>
-              <button className="bg-white p-2 rounded-xl shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform">
-                <div className="bg-green-100 p-1.5 rounded-lg text-green-500"><Wind className="w-4 h-4"/></div>
-                <span className="text-[10px] font-medium text-gray-700">Breathe</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Daily Check-in Card */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-3 shadow-sm border border-white/50 flex flex-col">
-            <div className="flex items-center gap-1.5 mb-1">
-              <Sun className="w-4 h-4 text-[#21c55e]" />
-              <h3 className="text-[13px] font-bold text-gray-900">Check-in</h3>
-            </div>
-            <p className="text-gray-500 mb-2 text-[10px]">How are you feeling?</p>
-            <div className="grid grid-cols-2 gap-1.5 mt-auto">
-               <button className="py-2 px-1 rounded-xl border flex flex-col items-center justify-center gap-1 border-green-100 bg-green-50/40 active:bg-green-50 transition-colors text-green-700 font-medium text-[11px]">
-                 <Smile className="w-4 h-4" /> Great
-               </button>
-               <button className="py-2 px-1 rounded-xl border flex flex-col items-center justify-center gap-1 border-blue-100 bg-blue-50/50 active:bg-blue-50 transition-colors text-blue-700 font-medium text-[11px]">
-                 <Meh className="w-4 h-4" /> Okay
-               </button>
-               <button className="py-2 px-1 rounded-xl border flex flex-col items-center justify-center gap-1 border-orange-100 bg-orange-50/50 active:bg-orange-50 transition-colors text-orange-700 font-medium text-[11px]">
-                 <Frown className="w-4 h-4" /> Stressed
-               </button>
-               <button className="py-2 px-1 rounded-xl border flex flex-col items-center justify-center gap-1 border-red-100 bg-red-50/30 active:bg-red-50 transition-colors text-red-700 font-medium text-[11px]">
-                 <AlertCircle className="w-4 h-4" /> Difficult
-               </button>
-            </div>
-          </div>
-        </div>
-      </div>
-      
     </div>
   );
 }

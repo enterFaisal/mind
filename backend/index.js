@@ -7,6 +7,7 @@ const { GoogleGenAI } = require("@google/genai");
 const multer = require("multer");
 const axios = require("axios");
 const fs = require("fs");
+const path = require("path");
 const {
   ROLES,
   DB_FILE,
@@ -39,6 +40,11 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const upload = multer({ dest: "uploads/" });
 
 const sseClients = new Set(); // For real-time Server-Sent Events
+const RECORDINGS_DIR = path.join(__dirname, "recordings");
+const STT_SAMPLE_RATE = 16000;
+let mp3EncoderModulePromise = null;
+let humeModulePromise = null;
+let humeClient = null;
 
 // Helper to broadcast a saved log to connected dashboards.
 function broadcastLog(logEntry) {
@@ -83,6 +89,170 @@ function getPatientOrReject(patientId, res) {
 function cleanupUpload(file) {
   if (file && fs.existsSync(file.path)) {
     fs.unlinkSync(file.path);
+  }
+}
+
+function ensurePatientRecordingDir(patientId) {
+  const patientDir = path.join(RECORDINGS_DIR, patientId);
+  fs.mkdirSync(patientDir, { recursive: true });
+  return patientDir;
+}
+
+function getNextRecordingPath(patientId) {
+  const patientDir = ensurePatientRecordingDir(patientId);
+  const existingCount = fs
+    .readdirSync(patientDir)
+    .filter((fileName) => fileName.endsWith(".mp3")).length;
+  const recordingNumber = String(existingCount + 1).padStart(3, "0");
+  return path.join(patientDir, `${patientId}-${recordingNumber}.mp3`);
+}
+
+async function getMp3EncoderModule() {
+  if (!mp3EncoderModulePromise) {
+    mp3EncoderModulePromise = import("@breezystack/lamejs");
+  }
+  return mp3EncoderModulePromise;
+}
+
+async function encodePcm16ToMp3(pcmBuffer) {
+  const { Mp3Encoder } = await getMp3EncoderModule();
+  const sampleCount = Math.floor(pcmBuffer.length / 2);
+  const samples = new Int16Array(sampleCount);
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    samples[index] = pcmBuffer.readInt16LE(index * 2);
+  }
+
+  const encoder = new Mp3Encoder(1, STT_SAMPLE_RATE, 64);
+  const mp3Chunks = [];
+  const blockSize = 1152;
+
+  for (let offset = 0; offset < samples.length; offset += blockSize) {
+    const sampleChunk = samples.subarray(offset, offset + blockSize);
+    const mp3Buffer = encoder.encodeBuffer(sampleChunk);
+    if (mp3Buffer.length > 0) {
+      mp3Chunks.push(Buffer.from(mp3Buffer));
+    }
+  }
+
+  const finalBuffer = encoder.flush();
+  if (finalBuffer.length > 0) {
+    mp3Chunks.push(Buffer.from(finalBuffer));
+  }
+
+  return Buffer.concat(mp3Chunks);
+}
+
+async function saveRealtimeSttRecording(patientId, pcmChunks) {
+  if (!patientId || pcmChunks.length === 0) return null;
+
+  const pcmBuffer = Buffer.concat(pcmChunks);
+  const mp3Buffer = await encodePcm16ToMp3(pcmBuffer);
+  const recordingPath = getNextRecordingPath(patientId);
+
+  fs.writeFileSync(recordingPath, mp3Buffer);
+  console.log(`[Recordings] Saved STT audio: ${recordingPath}`);
+  return recordingPath;
+}
+
+function saveUploadedSttRecording(patientId, audioData) {
+  if (!patientId || !audioData?.length) return null;
+
+  const recordingPath = getNextRecordingPath(patientId);
+  fs.writeFileSync(recordingPath, audioData);
+  console.log(`[Recordings] Saved uploaded STT audio: ${recordingPath}`);
+  return recordingPath;
+}
+
+async function getHumeClient() {
+  if (!process.env.HUME_API_KEY) return null;
+
+  if (!humeClient) {
+    if (!humeModulePromise) {
+      humeModulePromise = import("hume");
+    }
+    const { HumeClient } = await humeModulePromise;
+    humeClient = new HumeClient({ apiKey: process.env.HUME_API_KEY });
+  }
+
+  return humeClient;
+}
+
+function collectProsodyPredictions(result) {
+  const directPredictions = result?.prosody?.predictions;
+  if (Array.isArray(directPredictions)) return directPredictions;
+
+  const groupedPredictions =
+    result?.prosody?.groupedPredictions || result?.prosody?.grouped_predictions;
+  if (Array.isArray(groupedPredictions)) {
+    return groupedPredictions.flatMap((group) => group.predictions || []);
+  }
+
+  return [];
+}
+
+function summarizeHumeExpressions(predictions) {
+  const expressionTotals = new Map();
+
+  for (const prediction of predictions) {
+    for (const emotion of prediction.emotions || []) {
+      const current = expressionTotals.get(emotion.name) || {
+        name: emotion.name,
+        total: 0,
+        count: 0,
+      };
+      current.total += Number(emotion.score) || 0;
+      current.count += 1;
+      expressionTotals.set(emotion.name, current);
+    }
+  }
+
+  const voiceExpressions = Array.from(expressionTotals.values())
+    .map((expression) => ({
+      name: expression.name,
+      score: Number((expression.total / expression.count).toFixed(3)),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  return {
+    voice_expressions: voiceExpressions,
+    voice_expression_summary: voiceExpressions
+      .slice(0, 3)
+      .map((expression) => expression.name)
+      .join(", "),
+  };
+}
+
+async function analyzeVoiceExpressions(recordingPath) {
+  if (!recordingPath) return {};
+
+  const client = await getHumeClient();
+  if (!client) {
+    return {
+      voice_expression_error: "HUME_API_KEY is not configured",
+    };
+  }
+
+  try {
+    const socket = await client.expressionMeasurement.stream.connect({
+      config: { prosody: {} },
+    });
+
+    try {
+      const result = await socket.sendFile({
+        file: fs.createReadStream(recordingPath),
+      });
+      const predictions = collectProsodyPredictions(result);
+      return summarizeHumeExpressions(predictions);
+    } finally {
+      socket.close();
+    }
+  } catch (error) {
+    console.error("[Hume] Voice expression analysis failed:", error.message);
+    return {
+      voice_expression_error: error.message,
+    };
   }
 }
 
@@ -415,6 +585,9 @@ app.get("/api/db/schema", requireRole(ROLES.ADMIN), (req, res) => {
         crisis_risk_level: "Low | Medium | High",
         escalation_alert: "Boolean",
         clinical_summary: "String",
+        voice_expressions: "Array<{ name: String, score: Number }>",
+        voice_expression_summary: "String",
+        voice_expression_error: "String",
       },
     },
     constraints: {
@@ -483,9 +656,11 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
     }
 
     let userText = "";
+    let recordingPath = null;
 
     try {
       const audioData = fs.readFileSync(req.file.path);
+      recordingPath = saveUploadedSttRecording(patientId, audioData);
       const audioBlob = new Blob([audioData], { type: "audio/mp3" });
       const sttFormData = new FormData();
       sttFormData.append("file", audioBlob, "audio.webm");
@@ -525,12 +700,14 @@ app.post("/api/voice", upload.single("audio"), async (req, res) => {
       "voice",
       voiceLang,
     );
+    const voiceExpressionData = await analyzeVoiceExpressions(recordingPath);
 
     const logEntry = createLog({
       patientId,
       type: "voice",
       userText: userText,
       ...aiResponse,
+      ...voiceExpressionData,
     });
     broadcastLog(logEntry);
 
@@ -597,6 +774,7 @@ wss.on("connection", (ws, req) => {
   let currentTranscript = "";
   let currentVoicePref = "female";
   let currentLanguage = "EN";
+  let currentRecordingChunks = [];
 
   console.log("[WSS] Client connected for Real-Time WebSocket stream.");
 
@@ -605,6 +783,7 @@ wss.on("connection", (ws, req) => {
       if (isBinary) {
         // Binary audio passing directly to ElevenLabs
         if (elevenWs) {
+          currentRecordingChunks.push(Buffer.from(msg));
           const base64Audio = msg.toString("base64");
           const chunkMsg = JSON.stringify({
             message_type: "input_audio_chunk",
@@ -644,6 +823,7 @@ wss.on("connection", (ws, req) => {
         currentVoicePref = data.voice || "female";
         currentLanguage = data.language || "EN";
         elevenAudioBuffer = [];
+        currentRecordingChunks = [];
 
         const sttLangCode = currentLanguage === "AR" ? "ara" : "eng";
         console.log(
@@ -705,6 +885,16 @@ wss.on("connection", (ws, req) => {
           elevenWs.close();
         }
 
+        let recordingPath = null;
+        try {
+          recordingPath = await saveRealtimeSttRecording(
+            currentPatientId,
+            currentRecordingChunks,
+          );
+        } catch (recordingErr) {
+          console.error("[Recordings] Failed to save STT audio:", recordingErr.message);
+        }
+
         if (!currentTranscript) currentTranscript = "Hello?";
 
         console.log(`\n================ STT RESULT ================`);
@@ -717,12 +907,14 @@ wss.on("connection", (ws, req) => {
           "voice",
           currentLanguage,
         );
+        const voiceExpressionData = await analyzeVoiceExpressions(recordingPath);
 
         const logEntry = createLog({
           patientId: currentPatientId,
           type: "voice",
           userText: currentTranscript,
           ...aiResponse,
+          ...voiceExpressionData,
         });
         broadcastLog(logEntry); // Trigger dashboard SSE
 

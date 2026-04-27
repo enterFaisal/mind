@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+backend/recordings/
+backend/data/*.sqlite
+backend/data/*.sqlite-shm
+backend/data/*.sqlite-wal

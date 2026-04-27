@@ -76,6 +76,9 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
   const currentEmotion = latestLog.patient_sentiment || 'Unknown';
   const crisisLevel = latestLog.crisis_risk_level || 'Low';
   const totalInterventions = logs.length;
+  const latestVoiceExpressionLog = logs.find((log) => log.voice_expression_summary);
+  const latestVoiceExpression =
+    latestVoiceExpressionLog?.voice_expression_summary || 'No voice data yet';
 
   // Active alerts (escalation_alert true and not acknowledged)
   const activeAlerts = logs.filter(log => log.escalation_alert && !acknowledgedAlerts[log.id]);
@@ -101,6 +104,11 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
     if (l === 'high') return 'bg-red-500 w-full';
     if (l === 'medium') return 'bg-orange-400 w-2/3';
     return 'bg-green-400 w-1/3';
+  };
+
+  const voiceExpressionItems = (log) => {
+    if (!Array.isArray(log.voice_expressions)) return [];
+    return log.voice_expressions.slice(0, 3);
   };
 
   return (
@@ -149,7 +157,7 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
       )}
 
       {/* ANALYTICS WIDGETS */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         {/* Widget 1: Current Emotion */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5 flex flex-col justify-between">
           <div className="flex items-center justify-between mb-3 sm:mb-4">
@@ -186,6 +194,22 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
           <div className="mt-auto flex items-baseline gap-2">
             <span className="text-3xl sm:text-4xl font-extrabold text-indigo-600">{totalInterventions}</span>
             <span className="text-xs sm:text-sm font-medium text-slate-500">today</span>
+          </div>
+        </div>
+
+        {/* Widget 4: Expressions from Voice */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-3 sm:mb-4">
+            <h3 className="text-xs sm:text-sm font-bold text-slate-500 uppercase tracking-wider">Expressions from Voice</h3>
+            <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400" />
+          </div>
+          <div className="mt-auto">
+            <p className={`text-sm sm:text-base font-bold leading-snug ${latestVoiceExpressionLog ? 'text-indigo-700' : 'text-slate-400'}`}>
+              {latestVoiceExpression}
+            </p>
+            {latestVoiceExpressionLog?.voice_expression_error && (
+              <p className="text-xs text-slate-400 mt-1">Hume unavailable</p>
+            )}
           </div>
         </div>
       </div>
@@ -231,6 +255,21 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
                       <p className="text-xs font-medium text-slate-700 leading-relaxed">
                         {log.clinical_summary || log.userText || "No summary available."}
                       </p>
+                      {log.type === 'voice' && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {voiceExpressionItems(log).length > 0 ? (
+                            voiceExpressionItems(log).map((expression) => (
+                              <span key={expression.name} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                                {expression.name} {Math.round(expression.score * 100)}%
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-[10px] font-semibold text-slate-400">
+                              No voice expression data
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -242,6 +281,7 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
                   <tr>
                     <th scope="col" className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-40">Time</th>
                     <th scope="col" className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-32">Risk Level</th>
+                    <th scope="col" className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-56">Voice Expressions</th>
                     <th scope="col" className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Clinical Summary</th>
                   </tr>
                 </thead>
@@ -261,6 +301,21 @@ export default function Dashboard({ patientId, patientName = 'Patient' }) {
                           <span className={`px-2.5 py-1 text-xs font-bold uppercase rounded-md border shadow-sm ${riskBadge(log.crisis_risk_level)}`}>
                             {log.crisis_risk_level || 'Low'}
                           </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {log.type === 'voice' && voiceExpressionItems(log).length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {voiceExpressionItems(log).map((expression) => (
+                                <span key={expression.name} className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 border border-indigo-100">
+                                  {expression.name} {Math.round(expression.score * 100)}%
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-xs font-semibold text-slate-400">
+                              {log.type === 'voice' ? 'No voice expression data' : 'Text interaction'}
+                            </span>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-start gap-3">
