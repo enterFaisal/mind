@@ -75,6 +75,54 @@ export default function Login() {
         </button>
 
 
+        <div className="mt-6 pt-4 border-t border-gray-100 text-sm text-gray-600">
+          <p className="font-semibold text-gray-800 mb-2">Demo accounts</p>
+          <div className="grid grid-cols-1 gap-2">
+            <div className="flex items-center justify-between bg-gray-50 rounded-xl p-3 border">
+              <div>
+                <div className="font-medium text-gray-900">MindBridge Admin</div>
+                <div className="text-xs text-gray-500">Role: ADMIN • ID: 1000000000</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setId('1000000000')}
+                className="text-sm text-teal-600 font-semibold"
+              >
+                Use
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between bg-gray-50 rounded-xl p-3 border">
+              <div>
+                <div className="font-medium text-gray-900">Dr. yasir</div>
+                <div className="text-xs text-gray-500">Role: DOCTOR • ID: 0000000000</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setId('0000000000')}
+                className="text-sm text-teal-600 font-semibold"
+              >
+                Use
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between bg-gray-50 rounded-xl p-3 border">
+              <div>
+                <div className="font-medium text-gray-900">Ahmed</div>
+                <div className="text-xs text-gray-500">Role: PATIENT • ID: 1111111111</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setId('1111111111')}
+                className="text-sm text-teal-600 font-semibold"
+              >
+                Use
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 mt-3">Tip: click 'Use' to autofill the ID for demo login.</p>
+        </div>
+
       </form>
     </div>
   );
